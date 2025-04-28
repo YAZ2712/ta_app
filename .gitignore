@@ -1,0 +1,9 @@
+.dart_tool
+.vscode
+.idea
+android
+build
+linux
+macos
+web
+windows

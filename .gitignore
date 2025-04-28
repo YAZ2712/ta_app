@@ -1,9 +1,12 @@
 .dart_tool
 .vscode
 .idea
-android
 build
 linux
 macos
 web
 windows
+ios
+android/app
+android/.gradle
+android/gradle

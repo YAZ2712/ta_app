@@ -39,6 +39,7 @@ class AntaresMqttService {
       client.onConnected = _onConnected;
       client.onDisconnected = _onDisconnected;
       client.onSubscribed = _onSubscribed;
+      client.logging(on: true);
 
       final connMessage = MqttConnectMessage()
           .withClientIdentifier(
@@ -156,9 +157,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   double energy = 0.0;
   double totalEnergy = 0.0;
   double dailyEnergy = 0.0;
-  double energyLimit = 5.0; // Default limit
-  double limit90 = 4.5;
-  double limit80 = 4.0;
   double co2Emission = 0.0; // Calculated based on energy consumption
   double cost = 0.0; // Calculated based on energy consumption
 
@@ -254,20 +252,10 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         dailyEnergy =
             double.tryParse(data['DailyEnergy'].toString()) ?? dailyEnergy;
       }
-      if (data['energyLimit2'] != null) {
-        energyLimit =
-            double.tryParse(data['energyLimit2'].toString()) ?? energyLimit;
-      }
-      if (data['limit90'] != null) {
-        limit90 = double.tryParse(data['limit90'].toString()) ?? limit90;
-      }
-      if (data['limit80'] != null) {
-        limit80 = double.tryParse(data['limit80'].toString()) ?? limit80;
 
-        // Calculate CO2 and cost based on energy consumption
-        co2Emission = totalEnergy * co2Factor;
-        cost = totalEnergy * costPerKwh;
-      }
+      // Calculate CO2 and cost based on energy consumption
+      co2Emission = totalEnergy * co2Factor;
+      cost = totalEnergy * costPerKwh;
     });
   }
 
@@ -341,23 +329,10 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                   double.tryParse(deviceData['DailyEnergy'].toString()) ??
                   dailyEnergy;
             }
-            if (deviceData['energyLimit2'] != null) {
-              energyLimit =
-                  double.tryParse(deviceData['energyLimit2'].toString()) ??
-                  energyLimit;
-            }
-            if (deviceData['limit90'] != null) {
-              limit90 =
-                  double.tryParse(deviceData['limit90'].toString()) ?? limit90;
-            }
-            if (deviceData['limit80'] != null) {
-              limit80 =
-                  double.tryParse(deviceData['limit80'].toString()) ?? limit80;
 
-              // Calculate CO2 and cost based on energy consumption
-              co2Emission = totalEnergy * co2Factor;
-              cost = totalEnergy * costPerKwh;
-            }
+            // Calculate CO2 and cost based on energy consumption
+            co2Emission = totalEnergy * co2Factor;
+            cost = totalEnergy * costPerKwh;
           });
         }
       } else {
@@ -598,7 +573,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Progress indicator card
+              // Time display card
               Card(
                 elevation: 3,
                 shape: RoundedRectangleBorder(
@@ -606,70 +581,20 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                 ),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'TASKBAR',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.amber[800],
-                            ),
-                          ),
-                          Text(
-                            DateFormat('HH:mm:ss').format(now),
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
                       Text(
-                        'BATAS PENGGUNAAN: $energyLimit kWh',
-                        style: const TextStyle(
-                          fontSize: 14,
+                        'WAKTU SEKARANG',
+                        style: TextStyle(
+                          fontSize: 16,
                           fontWeight: FontWeight.bold,
+                          color: Colors.indigo[800],
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      LinearProgressIndicator(
-                        value:
-                            energyLimit > 0
-                                ? (dailyEnergy / energyLimit).clamp(0.0, 1.0)
-                                : 0,
-                        backgroundColor: Colors.grey[200],
-                        color:
-                            dailyEnergy >= energyLimit
-                                ? Colors.red
-                                : Colors.amber[700],
-                        minHeight: 8,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            '0 kWh',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                          Text(
-                            '$energyLimit kWh',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
+                      Text(
+                        DateFormat('HH:mm:ss').format(now),
+                        style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                       ),
                     ],
                   ),

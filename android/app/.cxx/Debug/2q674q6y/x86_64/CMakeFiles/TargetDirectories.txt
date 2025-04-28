@@ -1,2 +1,0 @@
-C:/Users/Lenovo/FLUTTER PROJECT TA/ta_app/android/app/.cxx/Debug/2q674q6y/x86_64/CMakeFiles/edit_cache.dir
-C:/Users/Lenovo/FLUTTER PROJECT TA/ta_app/android/app/.cxx/Debug/2q674q6y/x86_64/CMakeFiles/rebuild_cache.dir

@@ -3,7 +3,6 @@ import 'monitoring_screen.dart';
 import 'predicting_screen.dart';
 import 'history_screen.dart';
 import 'counter_screen.dart';
-import 'limitenergy_screen.dart';
 
 class HomePageScreen extends StatelessWidget {
   const HomePageScreen({super.key});
@@ -65,12 +64,6 @@ class HomePageScreen extends StatelessWidget {
                   'History',
                   'assets/history.png',
                   const HistoryScreen(),
-                ),
-                _buildMenuCard(
-                  context,
-                  'LimitEnergy',
-                  'assets/limitenergy.png',
-                  const LimitenergyScreen(),
                 ),
               ],
             ),

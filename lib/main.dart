@@ -266,10 +266,8 @@ class _CounterScreenState extends State<CounterScreen> {
     });
 
     _initMqttService();
-
     // Fetch data saat aplikasi dimulai
     fetchDataFromAntares();
-
     // Setup timer untuk polling HTTP yang disesuaikan dengan hari kerja/libur
     _setupHttpPollingTimer();
   }
@@ -663,19 +661,22 @@ class _CounterScreenState extends State<CounterScreen> {
       height: 70,
       child: ElevatedButton(
         onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder:
-                  (context) => ManualControlScreen(
-                    initialFanStatus: _deviceStatus.fan,
-                    initialLampStatus: _deviceStatus.lamp,
-                    initialAcStatus: _deviceStatus.ac,
-                    initialDispenserStatus: _deviceStatus.dispenser,
-                    systemActive: _deviceStatus.systemActive,
-                  ),
-            ),
-          );
+          Navigator.of(context)
+              .push(
+                MaterialPageRoute(
+                  builder:
+                      (context) => ManualControlScreen(
+                        initialFanStatus: _deviceStatus.fan,
+                        initialLampStatus: _deviceStatus.lamp,
+                        initialAcStatus: _deviceStatus.ac,
+                        initialDispenserStatus: _deviceStatus.dispenser,
+                        systemActive: _deviceStatus.systemActive,
+                      ),
+                ),
+              )
+              .then((value) {
+                fetchDataFromAntares();
+              });
         },
         style: ElevatedButton.styleFrom(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),

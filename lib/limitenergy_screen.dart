@@ -1,12 +1,11 @@
-import 'dart:async'; // For Timer and async operations
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
-import 'package:mqtt_client/mqtt_client.dart'; // MQTT Client imports
+import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 
 class LimitenergyScreen extends StatefulWidget {
-  // Keep widget properties for initial values
   final double currentLimit;
   final double limit90;
   final double limit80;
@@ -25,50 +24,52 @@ class LimitenergyScreen extends StatefulWidget {
 class _LimitenergyScreenState extends State<LimitenergyScreen> {
   final TextEditingController _limitController = TextEditingController();
   final logger = Logger('LimitenergyScreen');
-  bool _isLoading = false; // Renamed to avoid conflict
+  bool _isLoading = false;
   bool _isMqttConnected = false;
+  bool _waitingForConfirmation = false;
+  String? _lastRequestId;
 
-  // --- MQTT Client and Configuration Embedded Here ---
-  MqttServerClient? client; // Make client nullable
+  // MQTT Configuration
+  MqttServerClient? client;
   final String _mqttBroker = 'mqtt.antares.id';
   final int _mqttPort = 1883;
-  final String _accessKey =
-      'b1e8024f40e20d77:9f09d4019f441404'; // Your Antares Key
-  final String _projectName = 'TA-YAZ'; // Your Antares Project
-  final String _deviceName = 'COUNTER'; // Your Antares Device
+  final String _accessKey = 'b1e8024f40e20d77:9f09d4019f441404';
+  final String _projectName = 'TA-YAZ';
+  final String _deviceName = 'COUNTER';
   final String _clientId =
       'dart_client_${DateTime.now().millisecondsSinceEpoch}';
   final String _responseTopic =
-      '/oneM2M/resp/b1e8024f40e20d77:9f09d4019f441404/antares-cse/json'; // Listen for responses
+      '/oneM2M/resp/b1e8024f40e20d77:9f09d4019f441404/antares-cse/json';
   final String _requestTopic =
-      '/oneM2M/req/b1e8024f40e20d77:9f09d4019f441404/antares-cse/json'; // Send requests
-  StreamSubscription? _mqttSubscription; // To manage the listener
+      '/oneM2M/req/b1e8024f40e20d77:9f09d4019f441404/antares-cse/json';
+  StreamSubscription? _mqttSubscription;
 
   @override
   void initState() {
     super.initState();
     _limitController.text = widget.currentLimit.toStringAsFixed(2);
-    _setupLogging(); // Optional: Setup logger if not done globally
-    _connectMqtt(); // Initiate connection when the screen loads
+    _setupLogging();
+    _connectMqtt();
   }
 
   @override
   void dispose() {
     logger.info("Disposing LimitenergyScreen - Disconnecting MQTT");
-    _disconnectMqtt(); // Disconnect MQTT when the screen is removed
+    _disconnectMqtt();
     _limitController.dispose();
+    _reconnectTimer?.cancel();
     super.dispose();
   }
 
-  // Optional: Setup logger level for debugging
   void _setupLogging() {
-    // Logger.root.level = Level.ALL; // Or Level.INFO
-    // Logger.root.onRecord.listen((record) {
-    //   debugPrint('${record.level.name}: ${record.time}: ${record.loggerName}: ${record.message}');
-    // });
+    Logger.root.level = Level.ALL;
+    Logger.root.onRecord.listen((record) {
+      debugPrint(
+        '${record.level.name}: ${record.time}: ${record.loggerName}: ${record.message}',
+      );
+    });
   }
 
-  // --- MQTT Connection Logic ---
   Future<void> _connectMqtt() async {
     if (client != null &&
         client?.connectionStatus?.state == MqttConnectionState.connected) {
@@ -79,72 +80,61 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
     client = MqttServerClient(_mqttBroker, _clientId);
     client!.port = _mqttPort;
     client!.keepAlivePeriod = 60;
-    client!.logging(
-      on: false,
-    ); // Disable default client logging if using Flutter logger
+    client!.logging(on: false);
     client!.onConnected = _onMqttConnected;
     client!.onDisconnected = _onMqttDisconnected;
     client!.onSubscribed = _onMqttSubscribed;
-    client!.pongCallback = _pong; // Optional: Handle ping responses
+    client!.pongCallback = _pong;
 
     final connMessage = MqttConnectMessage()
         .withClientIdentifier(_clientId)
-        .startClean() // Clean session for commands is usually good
+        .startClean()
         .withWillQos(MqttQos.atLeastOnce);
     client!.connectionMessage = connMessage;
 
     try {
       logger.info('MQTT: Attempting connection to $_mqttBroker...');
-      // Use Access Key as username, password can often be empty for Antares key-based auth
       await client!.connect();
     } catch (e) {
       logger.severe('MQTT: Connection exception: $e');
-      _handleDisconnect(); // Handle cleanup and potentially schedule reconnect
+      _handleDisconnect();
     }
   }
 
   void _disconnectMqtt() {
     logger.info("MQTT: Explicitly disconnecting...");
     client?.disconnect();
-    _mqttSubscription?.cancel(); // Cancel the listener
+    _mqttSubscription?.cancel();
     _mqttSubscription = null;
-    // Don't call _onMqttDisconnected here, let the client trigger it
   }
 
   void _onMqttConnected() {
     logger.info('MQTT: Connected successfully.');
     if (mounted) {
-      // Ensure widget is still in tree
       setState(() {
         _isMqttConnected = true;
       });
     }
-    // Subscribe to the response topic
     logger.info('MQTT: Subscribing to response topic: $_responseTopic');
     client?.subscribe(_responseTopic, MqttQos.atLeastOnce);
-
-    // Start listening to MQTT messages
     _listenToMqttMessages();
   }
 
   void _listenToMqttMessages() {
-    _mqttSubscription?.cancel(); // Cancel previous subscription if any
+    _mqttSubscription?.cancel();
     _mqttSubscription = client?.updates?.listen((
       List<MqttReceivedMessage<MqttMessage>> c,
     ) {
-      final MqttReceivedMessage<MqttMessage> recMess = c[0];
-
-      // Ensure payload is MqttPublishMessage before proceeding
+      final recMess = c[0];
       if (recMess.payload is MqttPublishMessage) {
-        final MqttPublishMessage message =
-            recMess.payload as MqttPublishMessage;
+        final message = recMess.payload as MqttPublishMessage;
         final payload = MqttPublishPayload.bytesToStringAsString(
           message.payload.message,
         );
         logger.fine(
           'MQTT: Received message: topic is ${recMess.topic}, payload is $payload',
         );
-        _processMqttData(payload); // Process the received data
+        _processMqttData(payload);
       } else {
         logger.warning(
           'MQTT: Received non-publish message type on topic ${recMess.topic}',
@@ -157,8 +147,6 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
   void _onMqttDisconnected() {
     logger.warning('MQTT: Disconnected.');
     _handleDisconnect();
-    // Optional: Implement automatic reconnection logic here if desired
-    // Be careful with infinite loops on persistent failures
     _scheduleReconnect();
   }
 
@@ -168,15 +156,14 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
         _isMqttConnected = false;
       });
     }
-    _mqttSubscription?.cancel(); // Ensure listener is stopped
+    _mqttSubscription?.cancel();
     _mqttSubscription = null;
-    client = null; // Clear the client instance
+    client = null;
   }
 
   Timer? _reconnectTimer;
   void _scheduleReconnect() {
-    _reconnectTimer?.cancel(); // Cancel any existing timer
-    // Only try to reconnect if the widget is still mounted
+    _reconnectTimer?.cancel();
     if (mounted) {
       logger.info("MQTT: Scheduling reconnect in 5 seconds...");
       _reconnectTimer = Timer(const Duration(seconds: 5), () {
@@ -196,53 +183,58 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
     logger.fine('MQTT: Ping response received (pong)');
   }
 
-  // --- Process Incoming MQTT Data ---
   void _processMqttData(String payload) {
-    // This function handles data RECEIVED from Antares via MQTT.
-    // You might receive confirmations or other data updates here.
     logger.info('MQTT: Processing received data: $payload');
     try {
       final data = jsonDecode(payload);
 
-      // Example: Check if it's a confirmation response for our request
       if (data['m2m:rsp'] != null) {
         final rsp = data['m2m:rsp'];
-        final int statusCode = rsp['rsc'] ?? 0; // Response Status Code
-        final String? requestId = rsp['rqi']; // Original Request ID
+        final int statusCode = rsp['rsc'] ?? 0;
+        final String? requestId = rsp['rqi'];
 
         logger.info(
           "MQTT: Received response with status $statusCode for request $requestId",
         );
 
-        if (statusCode == 201 || statusCode == 200) {
-          // Optionally show a confirmation SnackBar based on response
-          // Be careful not to show duplicate SnackBars if already shown optimistically
-          // ScaffoldMessenger.of(context).showSnackBar(
-          //   SnackBar(content: Text("Konfirmasi diterima: Batas diatur (Kode: $statusCode)"), backgroundColor: Colors.blue)
-          // );
-          // Maybe update local state if the response contains new confirmed data
-        } else {
-          // Handle error responses from Antares
-          logger.warning(
-            "MQTT: Received error response from Antares: $statusCode",
-          );
-          // ScaffoldMessenger.of(context).showSnackBar(
-          //   SnackBar(content: Text("Server Antares merespon error: $statusCode"), backgroundColor: Colors.orange)
-          // );
+        if (requestId == _lastRequestId) {
+          setState(() {
+            _waitingForConfirmation = false;
+          });
+
+          if (statusCode == 2000) {
+            // Success status code for oneM2M
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Update berhasil diterima oleh server'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            }
+          } else {
+            logger.warning(
+              "MQTT: Received error response from Antares: $statusCode",
+            );
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Error dari server: $statusCode'),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+          }
         }
       } else {
-        // Handle other types of incoming data if needed
         logger.info("MQTT: Received data doesn't match known response format.");
-        // onDataReceived(contentData); // If you were passing data up before
       }
     } catch (e) {
       logger.severe('MQTT: Error processing MQTT data: $e\nPayload: $payload');
     }
   }
 
-  // --- Publish Energy Limit via MQTT (Called by Button) ---
   Future<void> _publishEnergyLimit() async {
-    // --- Input validation ---
     if (_limitController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -252,6 +244,7 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
       );
       return;
     }
+
     final newLimit = double.tryParse(_limitController.text);
     if (newLimit == null || newLimit <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -262,9 +255,7 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
       );
       return;
     }
-    // --- End validation ---
 
-    // --- Check MQTT Connection ---
     if (client == null ||
         client!.connectionStatus?.state != MqttConnectionState.connected) {
       logger.warning('MQTT: Client not connected. Cannot send.');
@@ -274,53 +265,36 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
           backgroundColor: Colors.orange,
         ),
       );
-      // Try to reconnect
       await _connectMqtt();
       if (client == null ||
-          client!.connectionStatus?.state != MqttConnectionState.connected)
+          client!.connectionStatus?.state != MqttConnectionState.connected) {
         return;
+      }
     }
 
     setState(() {
       _isLoading = true;
+      _waitingForConfirmation = true;
+      _lastRequestId = DateTime.now().millisecondsSinceEpoch.toString();
     });
 
     try {
-      // Calculate limits using the exact format from the JSON data
-      final newLimit90 = (newLimit * 0.9);
-      final newLimit80 = (newLimit * 0.8);
+      final contentPayload = {"energyLimit2": newLimit};
 
-      // Step 1: Create the content payload matching the JSON format
-      final Map<String, dynamic> contentPayload = {
-        "energyLimit2": newLimit, // Use exact field name from JSON
-        "limit90": newLimit90, // These will be calculated
-        "limit80": newLimit80, // on the server side too
-      };
-
-      // Step 2: Create the properly structured oneM2M request
-      final Map<String, dynamic> requestPayload = {
+      final requestPayload = {
         "m2m:rqp": {
           "fr": _accessKey,
           "to": "/antares-cse/antares-id/$_projectName/$_deviceName",
           "op": 1,
-          "rqi":
-              DateTime.now().millisecondsSinceEpoch
-                  .toString(), // Use timestamp for unique request ID
+          "rqi": _lastRequestId,
           "pc": {
-            "m2m:cin": {
-              "cnf": "message",
-              "con": jsonEncode(
-                contentPayload,
-              ), // Properly encode the inner content
-            },
+            "m2m:cin": {"cnf": "message", "con": jsonEncode(contentPayload)},
           },
           "ty": 4,
         },
       };
 
-      // Step 3: Convert the entire structure to JSON
       final String finalPayloadString = jsonEncode(requestPayload);
-
       logger.info('MQTT: Publishing to topic: $_requestTopic');
       logger.fine('MQTT: Publishing payload: $finalPayloadString');
 
@@ -334,32 +308,30 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
         retain: false,
       );
 
-      // --- Optimistic Success Feedback ---
-      logger.info('MQTT: Energy limit update message published.');
-      if (!mounted) return;
+      // Wait for confirmation
+      await Future.delayed(const Duration(seconds: 5));
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Perintah pengaturan batas telah dikirim'),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      // Pop the screen, passing the *intended* new values
-      Navigator.pop(context, {
-        'newLimit': newLimit,
-        'newLimit90': newLimit90,
-        'newLimit80': newLimit80,
-      });
+      if (_waitingForConfirmation && mounted) {
+        logger.warning(
+          'Did not receive confirmation for request $_lastRequestId',
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Tidak menerima konfirmasi dari perangkat'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     } catch (e) {
       logger.severe('MQTT: Error publishing energy limit: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Gagal mengirim via MQTT: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal mengirim via MQTT: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -369,13 +341,11 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
     }
   }
 
-  // --- Build Method ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Row(
-          // Show connection status in AppBar
           children: [
             const Text('Atur Batas Penggunaan'),
             const Spacer(),
@@ -443,16 +413,15 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          // Call the publishing function directly
                           onPressed:
                               _isLoading || !_isMqttConnected
                                   ? null
-                                  : _publishEnergyLimit, // Disable if loading or disconnected
+                                  : _publishEnergyLimit,
                           style: ElevatedButton.styleFrom(
                             backgroundColor:
                                 _isMqttConnected
                                     ? Colors.amber[700]
-                                    : Colors.grey, // Grey out if disconnected
+                                    : Colors.grey,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 16),
                             shape: RoundedRectangleBorder(

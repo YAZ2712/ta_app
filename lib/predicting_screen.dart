@@ -13,7 +13,7 @@ class _PredictingScreenState extends State<PredictingScreen> {
 
   // TODO: Replace this with the actual URL of your prediction website
   final String _predictionUrl =
-      'https://sincere-moccasin-likely.ngrok-free.app/genergy_daily'; // <<<--- CHANGE THIS URL
+      'https://sincere-moccasin-likely.ngrok-free.app/forecast'; // <<<--- CHANGE THIS URL
 
   bool _isLoading = true; // Track loading state
 

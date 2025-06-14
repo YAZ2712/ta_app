@@ -28,8 +28,13 @@ environment:
 # the latest version available on pub.dev. To see which dependencies have newer
 # versions available, run `flutter pub outdated`.
 dependencies:
-  http: ^0.13.6
+  http: ^1.4.0
   logging: ^1.1.0
+  shared_preferences: ^2.5.3
+  flutter_local_notifications: ^17.2.2
+  workmanager: ^0.6.0
+  permission_handler: ^12.0.0+1
+  awesome_notifications: 0.10.1
   
   flutter:
     sdk: flutter
@@ -41,6 +46,7 @@ dependencies:
   provider: ^6.1.4
   mqtt_client: ^10.8.0
   webview_flutter: ^4.4.4
+  flutter_background_service: ^5.1.0
 
 dev_dependencies:
   flutter_test:
@@ -64,6 +70,7 @@ flutter:
     - assets/history.png
     - assets/control.png
     - assets/limitenergy.png
+    - assets/notif.png
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

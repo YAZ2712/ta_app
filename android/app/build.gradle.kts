@@ -13,10 +13,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11.toString()
+        jvmTarget = "11"
     }
 
     defaultConfig {
@@ -24,7 +25,7 @@ android {
         applicationId = "com.example.ta_app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = 21
+        minSdk = 23
         targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -45,4 +46,5 @@ flutter {
 
 dependencies {
     implementation("com.google.android.material:material:1.4.0")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }

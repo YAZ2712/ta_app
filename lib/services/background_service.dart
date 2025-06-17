@@ -76,6 +76,7 @@ Future<void> _checkEnergyLimitInBackground() async {
 
           print('📊 Device data: $deviceData');
 
+          // Baca data energi untuk informasi notifikasi
           double dailyEnergy =
               double.tryParse(deviceData['DailyEnergy']?.toString() ?? '0') ??
               0.0;
@@ -83,52 +84,77 @@ Future<void> _checkEnergyLimitInBackground() async {
               double.tryParse(deviceData['energyLimit2']?.toString() ?? '0') ??
               0.0;
 
+          // Baca status flag dari Antares
+          int statusLimit80 =
+              int.tryParse(deviceData['statusLimit80']?.toString() ?? '0') ?? 0;
+          int statusLimit90 =
+              int.tryParse(deviceData['statusLimit90']?.toString() ?? '0') ?? 0;
+
           print('⚡ Daily Energy: $dailyEnergy kWh');
           print('🎯 Energy Limit: $energyLimit kWh');
+          print('🚩 Status Limit 80%: $statusLimit80');
+          print('🚩 Status Limit 90%: $statusLimit90');
 
+          // Hitung persentase untuk informasi
+          double percentage = 0.0;
           if (energyLimit > 0) {
-            double percentage = (dailyEnergy / energyLimit * 100);
+            percentage = (dailyEnergy / energyLimit * 100);
             print('📈 Percentage: ${percentage.toStringAsFixed(2)}%');
+          }
 
-            // Simpan data untuk tracking perubahan
-            await _saveEnergyData(dailyEnergy, energyLimit, percentage);
+          // Simpan data untuk tracking perubahan
+          await _saveEnergyData(
+            dailyEnergy,
+            energyLimit,
+            percentage,
+            statusLimit80,
+            statusLimit90,
+          );
 
-            // Cek apakah perlu mengirim notifikasi dengan logic yang lebih sederhana
-            bool shouldNotify = await _shouldSendNotificationImproved(
-              percentage,
-            );
-            print('🔔 Should send notification: $shouldNotify');
+          // Cek apakah perlu mengirim notifikasi berdasarkan status flag
+          bool shouldNotify = await _shouldSendNotificationByStatus(
+            statusLimit80,
+            statusLimit90,
+          );
+          print('🔔 Should send notification: $shouldNotify');
 
-            if (shouldNotify) {
-              try {
-                print('🔔 Preparing to send notification...');
-                print('   Percentage: ${percentage.toStringAsFixed(2)}%');
-                print('   Daily Energy: ${dailyEnergy.toStringAsFixed(4)} kWh');
-                print('   Energy Limit: ${energyLimit.toStringAsFixed(4)} kWh');
+          if (shouldNotify) {
+            try {
+              print('🔔 Preparing to send notification...');
 
-                // Inisialisasi notification langsung di background isolate
-                await _initializeAndSendNotification(
-                  percentage: percentage,
-                  dailyEnergy: dailyEnergy,
-                  energyLimit: energyLimit,
-                );
+              // Tentukan level notifikasi berdasarkan status flag
+              int notificationLevel = _determineNotificationLevel(
+                statusLimit80,
+                statusLimit90,
+              );
+              print('   Notification Level: $notificationLevel');
+              print('   Percentage: ${percentage.toStringAsFixed(2)}%');
+              print('   Daily Energy: ${dailyEnergy.toStringAsFixed(4)} kWh');
+              print('   Energy Limit: ${energyLimit.toStringAsFixed(4)} kWh');
 
-                print('✅ Notification sent successfully');
-              } catch (notificationError) {
-                print('❌ Failed to send notification: $notificationError');
-              }
+              // Kirim notifikasi berdasarkan level
+              await _initializeAndSendNotificationByStatus(
+                notificationLevel: notificationLevel,
+                percentage: percentage,
+                dailyEnergy: dailyEnergy,
+                energyLimit: energyLimit,
+                statusLimit80: statusLimit80,
+                statusLimit90: statusLimit90,
+              );
+
+              print('✅ Notification sent successfully');
+            } catch (notificationError) {
+              print('❌ Failed to send notification: $notificationError');
             }
+          }
 
-            // Jika mendekati 75% atau lebih, aktifkan pengecekan lebih sering
-            if (percentage >= 75 && percentage < 100) {
-              print('🔄 Enabling frequent check (75%+ usage)');
-              await _enableFrequentCheck();
-            } else if (percentage < 75) {
-              print('⏸️ Disabling frequent check (<75% usage)');
-              await _disableFrequentCheck();
-            }
-          } else {
-            print('⚠️ Energy limit is 0 or invalid');
+          // Jika status 90% aktif, aktifkan pengecekan lebih sering
+          if (statusLimit90 == 1) {
+            print('🔄 Enabling frequent check (90% status active)');
+            await _enableFrequentCheck();
+          } else if (statusLimit80 == 0 && statusLimit90 == 0) {
+            print('⏸️ Disabling frequent check (all status inactive)');
+            await _disableFrequentCheck();
           }
         } else {
           print('❌ No content found in API response');
@@ -146,11 +172,89 @@ Future<void> _checkEnergyLimitInBackground() async {
   }
 }
 
-// Fungsi untuk inisialisasi dan mengirim notifikasi langsung di background isolate
-Future<void> _initializeAndSendNotification({
+// Fungsi untuk menentukan level notifikasi berdasarkan status flag
+int _determineNotificationLevel(int statusLimit80, int statusLimit90) {
+  if (statusLimit90 == 1) {
+    return 90; // Prioritas tertinggi
+  } else if (statusLimit80 == 1) {
+    return 80;
+  }
+  return 0; // Tidak ada notifikasi
+}
+
+// Fungsi untuk cek apakah perlu kirim notifikasi berdasarkan status flag
+Future<bool> _shouldSendNotificationByStatus(
+  int statusLimit80,
+  int statusLimit90,
+) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final lastStatusLimit80 = prefs.getInt('last_status_limit_80') ?? 0;
+    final lastStatusLimit90 = prefs.getInt('last_status_limit_90') ?? 0;
+    final lastNotificationTime = prefs.getInt('last_notification_time') ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    print('🔍 Checking notification conditions by status:');
+    print('   Current Status 80%: $statusLimit80 (Last: $lastStatusLimit80)');
+    print('   Current Status 90%: $statusLimit90 (Last: $lastStatusLimit90)');
+    print(
+      '   Last notification: ${DateTime.fromMillisecondsSinceEpoch(lastNotificationTime)}',
+    );
+
+    // Cooldown period: 5 menit untuk mencegah spam notifikasi
+    const cooldownPeriod = 5 * 60 * 1000; // 5 menit dalam milliseconds
+    final timeSinceLastNotification = now - lastNotificationTime;
+
+    // Kirim notifikasi jika:
+    // 1. Status 80% berubah dari 0 ke 1
+    // 2. Status 90% berubah dari 0 ke 1
+    // 3. Sudah melewati cooldown period sejak notifikasi terakhir
+
+    bool statusChanged = false;
+    String changeReason = "";
+
+    // Cek perubahan status 90% (prioritas tertinggi)
+    if (statusLimit90 == 1 && lastStatusLimit90 == 0) {
+      statusChanged = true;
+      changeReason = "Status 90% changed from 0 to 1";
+    }
+    // Cek perubahan status 80% (hanya jika 90% tidak berubah)
+    else if (statusLimit80 == 1 && lastStatusLimit80 == 0) {
+      statusChanged = true;
+      changeReason = "Status 80% changed from 0 to 1";
+    }
+
+    if (statusChanged) {
+      // Jika ada perubahan status, cek cooldown
+      if (timeSinceLastNotification > cooldownPeriod) {
+        print('✅ Status changed and cooldown passed: $changeReason');
+        return true;
+      } else {
+        print('❌ Status changed but still in cooldown period: $changeReason');
+        print(
+          '   Time since last: ${timeSinceLastNotification}ms, Required: ${cooldownPeriod}ms',
+        );
+        return false;
+      }
+    }
+
+    print('❌ No status change detected');
+    return false;
+  } catch (e) {
+    print('❌ Error checking notification conditions by status: $e');
+    // Dalam kasus error, tetap kirim notifikasi untuk safety
+    return true;
+  }
+}
+
+// Fungsi untuk inisialisasi dan mengirim notifikasi berdasarkan status
+Future<void> _initializeAndSendNotificationByStatus({
+  required int notificationLevel,
   required double percentage,
   required double dailyEnergy,
   required double energyLimit,
+  required int statusLimit80,
+  required int statusLimit90,
 }) async {
   try {
     print('📱 Initializing notification plugin in background...');
@@ -167,39 +271,29 @@ Future<void> _initializeAndSendNotification({
 
     await notificationsPlugin.initialize(initializationSettings);
 
-    // Tentukan level notifikasi berdasarkan persentase
+    // Tentukan konten notifikasi berdasarkan level
     String title;
     String body;
     String channelId;
     Priority priority;
     Importance importance;
-    int notificationLevel;
 
-    if (percentage >= 100) {
-      title = 'LIMIT ENERGI TERCAPAI!';
-      body = 'Penggunaan energi harian telah melebihi batas!';
-      channelId = 'energy_limit_critical';
+    if (notificationLevel == 90) {
+      title = 'PERINGATAN KRITIS!';
+      body =
+          'Status limit 90% telah aktif! Penggunaan energi mendekati batas maksimum.';
+      channelId = 'energy_limit_warning';
       priority = Priority.max;
       importance = Importance.max;
-      notificationLevel = 100;
-    } else if (percentage >= 90) {
-      title = 'PERINGATAN KRITIS!';
-      body = 'Penggunaan energi telah mencapai 90% dari batas harian.';
-      channelId = 'energy_limit_warning';
+    } else if (notificationLevel == 80) {
+      title = 'Peringatan Limit Energi';
+      body =
+          'Status limit 80% telah aktif! Harap perhatikan penggunaan energi.';
+      channelId = 'energy_limit_info';
       priority = Priority.high;
       importance = Importance.high;
-      notificationLevel = 90;
-    } else if (percentage >= 80) {
-      title = 'Peringatan Limit Energi';
-      body = 'Penggunaan energi telah mencapai 80% dari batas harian.';
-      channelId = 'energy_limit_info';
-      priority = Priority.defaultPriority;
-      importance = Importance.defaultImportance;
-      notificationLevel = 80;
     } else {
-      print(
-        '⚠️ Percentage ${percentage.toStringAsFixed(1)}% below notification threshold',
-      );
+      print('⚠️ Invalid notification level: $notificationLevel');
       return;
     }
 
@@ -218,7 +312,9 @@ Future<void> _initializeAndSendNotification({
 
     String detailedBody =
         '$body\n\n'
-        '📊 Detail Penggunaan:\n'
+        '📊 Detail Status:\n'
+        '• Status Limit 80%: ${statusLimit80 == 1 ? "AKTIF" : "TIDAK AKTIF"}\n'
+        '• Status Limit 90%: ${statusLimit90 == 1 ? "AKTIF" : "TIDAK AKTIF"}\n'
         '• Energi Harian: $formattedDailyEnergy kWh\n'
         '• Batas Limit: $formattedEnergyLimit kWh\n'
         '• Persentase: $formattedPercentage%\n\n'
@@ -228,18 +324,18 @@ Future<void> _initializeAndSendNotification({
         AndroidNotificationDetails(
           channelId,
           _getChannelName(channelId),
-          channelDescription: 'Notifikasi untuk limit energi harian',
+          channelDescription: 'Notifikasi untuk status limit energi',
           importance: importance,
           priority: priority,
           showWhen: true,
           when: DateTime.now().millisecondsSinceEpoch,
           enableVibration: true,
           playSound: true,
-          fullScreenIntent: percentage >= 100,
+          fullScreenIntent: notificationLevel == 90,
           category: AndroidNotificationCategory.alarm,
           visibility: NotificationVisibility.public,
-          ongoing: percentage >= 100,
-          autoCancel: percentage < 100,
+          ongoing: notificationLevel == 90,
+          autoCancel: notificationLevel != 90,
           styleInformation: BigTextStyleInformation(
             detailedBody,
             contentTitle: title,
@@ -266,16 +362,17 @@ Future<void> _initializeAndSendNotification({
       android: androidNotificationDetails,
     );
 
-    // Generate unique ID
+    // Generate unique ID berdasarkan level dan timestamp
     int notificationId =
-        (percentage.toInt() * 1000) +
+        (notificationLevel * 1000) +
         (DateTime.now().millisecondsSinceEpoch % 1000).toInt();
 
     print('📤 Sending notification with ID: $notificationId');
     print('   Title: $title');
+    print('   Level: $notificationLevel');
+    print('   Status 80%: $statusLimit80');
+    print('   Status 90%: $statusLimit90');
     print('   Percentage: $formattedPercentage%');
-    print('   Daily Energy: $formattedDailyEnergy kWh');
-    print('   Energy Limit: $formattedEnergyLimit kWh');
 
     await notificationsPlugin.show(
       notificationId,
@@ -283,7 +380,10 @@ Future<void> _initializeAndSendNotification({
       body,
       notificationDetails,
       payload: jsonEncode({
-        'type': 'energy_limit',
+        'type': 'energy_limit_status',
+        'level': notificationLevel,
+        'statusLimit80': statusLimit80,
+        'statusLimit90': statusLimit90,
         'percentage': percentage,
         'dailyEnergy': dailyEnergy,
         'energyLimit': energyLimit,
@@ -291,14 +391,66 @@ Future<void> _initializeAndSendNotification({
       }),
     );
 
-    // Update last notification setelah berhasil mengirim
-    await _updateLastNotification(notificationLevel);
+    // Update last notification dan status setelah berhasil mengirim
+    await _updateLastNotificationByStatus(
+      notificationLevel,
+      statusLimit80,
+      statusLimit90,
+    );
 
     print('✅ Background notification sent successfully');
   } catch (e, stackTrace) {
     print('❌ Error in background notification: $e');
     print('StackTrace: $stackTrace');
     rethrow;
+  }
+}
+
+// Fungsi untuk menyimpan data energi dan status
+Future<void> _saveEnergyData(
+  double dailyEnergy,
+  double energyLimit,
+  double percentage,
+  int statusLimit80,
+  int statusLimit90,
+) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('last_daily_energy', dailyEnergy);
+    await prefs.setDouble('last_energy_limit', energyLimit);
+    await prefs.setDouble('last_percentage', percentage);
+    await prefs.setInt('current_status_limit_80', statusLimit80);
+    await prefs.setInt('current_status_limit_90', statusLimit90);
+    await prefs.setInt(
+      'last_check_time',
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    print('💾 Energy data and status saved successfully');
+  } catch (e) {
+    print('❌ Failed to save energy data: $e');
+  }
+}
+
+// Update waktu dan status notifikasi terakhir
+Future<void> _updateLastNotificationByStatus(
+  int level,
+  int statusLimit80,
+  int statusLimit90,
+) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('last_notification_level', level);
+    await prefs.setInt('last_status_limit_80', statusLimit80);
+    await prefs.setInt('last_status_limit_90', statusLimit90);
+    await prefs.setInt(
+      'last_notification_time',
+      DateTime.now().millisecondsSinceEpoch,
+    );
+    print(
+      '📝 Last notification updated: level $level, status 80%: $statusLimit80, status 90%: $statusLimit90 at ${DateTime.now()}',
+    );
+  } catch (e) {
+    print('❌ Failed to update last notification: $e');
   }
 }
 
@@ -350,13 +502,13 @@ String _getChannelName(String channelId) {
 String _getChannelDescription(String channelId) {
   switch (channelId) {
     case 'energy_limit_critical':
-      return 'Notifikasi kritis ketika limit energi tercapai 100%';
+      return 'Notifikasi kritis ketika status limit energi aktif';
     case 'energy_limit_warning':
-      return 'Peringatan ketika limit energi mencapai 90%';
+      return 'Peringatan ketika status limit 90% aktif';
     case 'energy_limit_info':
-      return 'Informasi ketika limit energi mencapai 80%';
+      return 'Informasi ketika status limit 80% aktif';
     default:
-      return 'Notifikasi untuk limit energi harian';
+      return 'Notifikasi untuk status limit energi';
   }
 }
 
@@ -365,102 +517,7 @@ String _getCurrentTimeString() {
   return '${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
 }
 
-// Fungsi untuk menyimpan data energi
-Future<void> _saveEnergyData(
-  double dailyEnergy,
-  double energyLimit,
-  double percentage,
-) async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('last_daily_energy', dailyEnergy);
-    await prefs.setDouble('last_energy_limit', energyLimit);
-    await prefs.setDouble('last_percentage', percentage);
-    await prefs.setInt(
-      'last_check_time',
-      DateTime.now().millisecondsSinceEpoch,
-    );
-    print('💾 Energy data saved successfully');
-  } catch (e) {
-    print('❌ Failed to save energy data: $e');
-  }
-}
-
-// Fungsi yang diperbaiki untuk menentukan apakah perlu mengirim notifikasi
-Future<bool> _shouldSendNotificationImproved(double currentPercentage) async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final lastNotificationLevel = prefs.getInt('last_notification_level') ?? 0;
-    final lastNotificationTime = prefs.getInt('last_notification_time') ?? 0;
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    print('🔍 Checking notification conditions:');
-    print('   Current: ${currentPercentage.toStringAsFixed(1)}%');
-    print('   Last level: $lastNotificationLevel');
-    print(
-      '   Last time: ${DateTime.fromMillisecondsSinceEpoch(lastNotificationTime)}',
-    );
-
-    // Cooldown period: 15 menit untuk level yang sama
-    const cooldownPeriod = 15 * 60 * 1000; // 15 menit dalam milliseconds
-    final timeSinceLastNotification = now - lastNotificationTime;
-
-    // Tentukan level notifikasi saat ini
-    int currentLevel = 0;
-    if (currentPercentage >= 100) {
-      currentLevel = 100;
-    } else if (currentPercentage >= 90) {
-      currentLevel = 90;
-    } else if (currentPercentage >= 80) {
-      currentLevel = 80;
-    }
-
-    // Jika tidak ada level yang tercapai, jangan kirim notifikasi
-    if (currentLevel == 0) {
-      print('❌ No notification level reached');
-      return false;
-    }
-
-    // Kirim notifikasi jika:
-    // 1. Belum pernah mengirim notifikasi untuk level ini
-    // 2. Sudah melewati cooldown period untuk level yang sama
-    // 3. Level meningkat dari sebelumnya
-    if (lastNotificationLevel < currentLevel) {
-      print('✅ Level increased from $lastNotificationLevel to $currentLevel');
-      return true;
-    } else if (lastNotificationLevel == currentLevel &&
-        timeSinceLastNotification > cooldownPeriod) {
-      print('✅ Cooldown period passed for level $currentLevel');
-      return true;
-    }
-
-    print(
-      '❌ Notification blocked - Level: $currentLevel, Last: $lastNotificationLevel, Time since last: ${timeSinceLastNotification}ms',
-    );
-    return false;
-  } catch (e) {
-    print('❌ Error checking notification conditions: $e');
-    // Dalam kasus error, tetap kirim notifikasi untuk safety
-    return true;
-  }
-}
-
-// Update waktu notifikasi terakhir
-Future<void> _updateLastNotification(int level) async {
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('last_notification_level', level);
-    await prefs.setInt(
-      'last_notification_time',
-      DateTime.now().millisecondsSinceEpoch,
-    );
-    print('📝 Last notification updated: level $level at ${DateTime.now()}');
-  } catch (e) {
-    print('❌ Failed to update last notification: $e');
-  }
-}
-
-// Aktifkan pengecekan lebih sering ketika mendekati limit
+// Aktifkan pengecekan lebih sering ketika status 90% aktif
 Future<void> _enableFrequentCheck() async {
   try {
     await Workmanager().registerPeriodicTask(
@@ -545,6 +602,8 @@ class BackgroundService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('last_notification_level');
       await prefs.remove('last_notification_time');
+      await prefs.remove('last_status_limit_80');
+      await prefs.remove('last_status_limit_90');
       print('✅ Daily tracking reset successfully');
     } catch (e) {
       print('❌ Failed to reset daily tracking: $e');
@@ -569,9 +628,29 @@ class BackgroundService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove('last_notification_level');
       await prefs.remove('last_notification_time');
+      await prefs.remove('last_status_limit_80');
+      await prefs.remove('last_status_limit_90');
       print('✅ Notification tracking force reset completed');
     } catch (e) {
       print('❌ Failed to force reset notification tracking: $e');
+    }
+  }
+
+  // Fungsi untuk mendapatkan status limit terakhir
+  static Future<Map<String, dynamic>> getLastStatusInfo() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return {
+        'lastStatusLimit80': prefs.getInt('last_status_limit_80') ?? 0,
+        'lastStatusLimit90': prefs.getInt('last_status_limit_90') ?? 0,
+        'currentStatusLimit80': prefs.getInt('current_status_limit_80') ?? 0,
+        'currentStatusLimit90': prefs.getInt('current_status_limit_90') ?? 0,
+        'lastNotificationLevel': prefs.getInt('last_notification_level') ?? 0,
+        'lastNotificationTime': prefs.getInt('last_notification_time') ?? 0,
+      };
+    } catch (e) {
+      print('❌ Failed to get last status info: $e');
+      return {};
     }
   }
 }

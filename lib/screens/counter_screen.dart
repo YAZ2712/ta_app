@@ -33,6 +33,8 @@ class MyApp extends StatelessWidget {
   }
 }
 
+enum ControlMode { otomatis, manual }
+
 class DeviceStatus {
   final bool fan;
   final bool lamp;
@@ -40,6 +42,7 @@ class DeviceStatus {
   final bool dispenser;
   final bool systemActive;
   final int maxOccupancy;
+  final ControlMode controlMode;
 
   DeviceStatus({
     required this.fan,
@@ -48,9 +51,14 @@ class DeviceStatus {
     required this.dispenser,
     required this.systemActive,
     this.maxOccupancy = 10,
+    required this.controlMode,
   });
 
-  factory DeviceStatus.fromJson(Map<String, dynamic> json) {
+  // Diubah: Factory method sekarang menerima prefix (misal: '_l1' atau '_l2')
+  factory DeviceStatus.fromJson(
+    Map<String, dynamic> json, {
+    String prefix = '',
+  }) {
     bool convertToBool(dynamic value) {
       if (value is bool) return value;
       if (value is int) return value != 0;
@@ -60,25 +68,33 @@ class DeviceStatus {
       return false;
     }
 
-    final systemActive = convertToBool(json['system_active']);
+    final String modeStr = json['control_mode$prefix'] ?? 'otomatis';
+    final ControlMode mode =
+        modeStr.toLowerCase() == 'manual'
+            ? ControlMode.manual
+            : ControlMode.otomatis;
+    // Gunakan prefix untuk mendapatkan kunci yang benar
+    final systemActive = convertToBool(json['system_active$prefix']);
     return DeviceStatus(
-      fan: systemActive ? convertToBool(json['fan_status']) : false,
-      lamp: systemActive ? convertToBool(json['lamp_status']) : false,
-      ac: systemActive ? convertToBool(json['ac_status']) : false,
-      dispenser: systemActive ? convertToBool(json['dispenser_status']) : false,
+      fan: systemActive ? convertToBool(json['fan_status$prefix']) : false,
+      lamp: systemActive ? convertToBool(json['lamp_status$prefix']) : false,
+      ac: systemActive ? convertToBool(json['ac_status$prefix']) : false,
+      dispenser:
+          systemActive ? convertToBool(json['dispenser_status$prefix']) : false,
       systemActive: systemActive,
       maxOccupancy: json['max_occupancy'] is int ? json['max_occupancy'] : 10,
+      controlMode: mode,
     );
   }
 
-  // Tambahkan method untuk membandingkan DeviceStatus
   bool isEqual(DeviceStatus other) {
     return fan == other.fan &&
         lamp == other.lamp &&
         ac == other.ac &&
         dispenser == other.dispenser &&
         systemActive == other.systemActive &&
-        maxOccupancy == other.maxOccupancy;
+        maxOccupancy == other.maxOccupancy &&
+        controlMode == other.controlMode;
   }
 
   @override
@@ -92,7 +108,8 @@ class DeviceStatus {
       ac.hashCode ^
       dispenser.hashCode ^
       systemActive.hashCode ^
-      maxOccupancy.hashCode;
+      maxOccupancy.hashCode ^
+      controlMode.hashCode;
 }
 
 final String accessKey = 'fe5c7a15d8c13220:bfd764392a99a094';
@@ -223,6 +240,8 @@ class CounterScreen extends StatefulWidget {
   State<CounterScreen> createState() => _CounterScreenState();
 }
 
+enum Floor { lantai1, lantai2 }
+
 class _CounterScreenState extends State<CounterScreen> {
   DateTime now = DateTime.now();
   bool isWorkingHours = false;
@@ -237,18 +256,36 @@ class _CounterScreenState extends State<CounterScreen> {
   late AntaresMqttService _antaresService;
   bool _hasInitialDataOnHoliday = false;
 
-  // Tambahkan variabel untuk menyimpan data sebelumnya
-  int _previousPeopleIn = -1;
-  int _previousPeopleOut = -1;
-  DeviceStatus? _previousDeviceStatus;
-
-  DeviceStatus _deviceStatus = DeviceStatus(
+  // --- PERUBAHAN STATE: Data untuk 2 Lantai ---
+  int peopleInL1 = 0;
+  int peopleOutL1 = 0;
+  DeviceStatus _deviceStatusL1 = DeviceStatus(
     fan: false,
     lamp: false,
     ac: false,
     dispenser: false,
     systemActive: false,
+    controlMode: ControlMode.otomatis,
   );
+
+  int peopleInL2 = 0;
+  int peopleOutL2 = 0;
+  DeviceStatus _deviceStatusL2 = DeviceStatus(
+    fan: false,
+    lamp: false,
+    ac: false,
+    dispenser: false,
+    systemActive: false,
+    controlMode: ControlMode.otomatis,
+  );
+
+  // Variabel untuk menyimpan data sebelumnya
+  int _previousPeopleInL1 = -1, _previousPeopleOutL1 = -1;
+  int _previousPeopleInL2 = -1, _previousPeopleOutL2 = -1;
+  DeviceStatus? _previousDeviceStatusL1, _previousDeviceStatusL2;
+
+  // Variabel untuk UI selector
+  Set<Floor> _selectedFloor = {Floor.lantai1};
 
   static const List<Map<String, int>> holidays = [
     {'month': 1, 'day': 1},
@@ -296,6 +333,15 @@ class _CounterScreenState extends State<CounterScreen> {
     _initMqttService();
     fetchDataFromAntares();
     _setupHttpPollingTimer();
+  }
+
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _timer?.cancel();
+    _httpPollingTimer?.cancel();
+    _antaresService.disconnect();
+    super.dispose();
   }
 
   void _setupHttpPollingTimer() {
@@ -351,91 +397,75 @@ class _CounterScreenState extends State<CounterScreen> {
   }
 
   // Method untuk update data dengan pengecekan perubahan
-  void updateDataFromMqtt(Map<String, dynamic> data) {
+  void _parseAndUpdateData(Map<String, dynamic> data) {
     if (!mounted) return;
 
-    // Check if this data contains counter-relevant information
+    // Cek apakah data relevan (mencegah update dari data monitoring daya, dll)
     if (!_isCounterRelevantData(data)) {
-      logger.info('Received non-counter data (power monitoring), ignoring...');
+      logger.info('Received non-counter data, ignoring...');
       return;
     }
 
-    // Ambil data baru
-    int newPeopleIn = data['Jumlah Orang Masuk'] ?? peopleIn;
-    int newPeopleOut = data['Jumlah Orang Keluar'] ?? peopleOut;
+    // Ambil data baru untuk Lantai 1
+    int newPeopleInL1 = data['current_occupancy_l1'] ?? peopleInL1;
+    int newPeopleOutL1 = data['total_people_exited_l1'] ?? peopleOutL1;
+    DeviceStatus newDeviceStatusL1 = DeviceStatus.fromJson(data, prefix: '_l1');
 
-    // Create new device status
-    DeviceStatus newDeviceStatus;
-    try {
-      newDeviceStatus = DeviceStatus.fromJson(data);
-    } catch (e) {
-      logger.warning('Failed to parse device status from MQTT data: $e');
-      return;
-    }
+    // Ambil data baru untuk Lantai 2
+    int newPeopleInL2 = data['current_occupancy_l2'] ?? peopleInL2;
+    int newPeopleOutL2 = data['total_people_exited_l2'] ?? peopleOutL2;
+    DeviceStatus newDeviceStatusL2 = DeviceStatus.fromJson(data, prefix: '_l2');
 
     // Cek apakah ada perubahan data
     bool hasChanges = false;
-
-    if (newPeopleIn != _previousPeopleIn ||
-        newPeopleOut != _previousPeopleOut ||
-        _previousDeviceStatus == null ||
-        !newDeviceStatus.isEqual(_previousDeviceStatus!)) {
+    if (newPeopleInL1 != _previousPeopleInL1 ||
+        newPeopleOutL1 != _previousPeopleOutL1 ||
+        newPeopleInL2 != _previousPeopleInL2 ||
+        newPeopleOutL2 != _previousPeopleOutL2 ||
+        _previousDeviceStatusL1 == null ||
+        !newDeviceStatusL1.isEqual(_previousDeviceStatusL1!) ||
+        _previousDeviceStatusL2 == null ||
+        !newDeviceStatusL2.isEqual(_previousDeviceStatusL2!)) {
       hasChanges = true;
-      logger.info(
-        'MQTT Counter Data changed - PeopleIn: $newPeopleIn, PeopleOut: $newPeopleOut',
-      );
+      logger.info('Data changed. L1 In: $newPeopleInL1, L2 In: $newPeopleInL2');
     }
 
     // Hanya update UI jika ada perubahan
     if (hasChanges && mounted && !_isDisposed) {
       setState(() {
-        peopleIn = newPeopleIn;
-        peopleOut = newPeopleOut;
-        _deviceStatus = newDeviceStatus;
+        // Update data state
+        peopleInL1 = newPeopleInL1;
+        peopleOutL1 = newPeopleOutL1;
+        _deviceStatusL1 = newDeviceStatusL1;
+
+        peopleInL2 = newPeopleInL2;
+        peopleOutL2 = newPeopleOutL2;
+        _deviceStatusL2 = newDeviceStatusL2;
+
+        // Handle initial data on holiday
+        final bool isWeekendDay = isWeekend(now);
+        final bool isHolidayDay = isHoliday(now);
+        if (isWeekendDay || isHolidayDay) {
+          _hasInitialDataOnHoliday = true;
+        }
       });
 
-      // Update data sebelumnya
-      _previousPeopleIn = newPeopleIn;
-      _previousPeopleOut = newPeopleOut;
-      _previousDeviceStatus = newDeviceStatus;
+      // Update data sebelumnya untuk perbandingan berikutnya
+      _previousPeopleInL1 = newPeopleInL1;
+      _previousPeopleOutL1 = newPeopleOutL1;
+      _previousDeviceStatusL1 = newDeviceStatusL1;
+
+      _previousPeopleInL2 = newPeopleInL2;
+      _previousPeopleOutL2 = newPeopleOutL2;
+      _previousDeviceStatusL2 = newDeviceStatusL2;
     } else if (!hasChanges) {
-      logger.info('MQTT Counter Data unchanged - skipping UI update');
+      logger.info('Data unchanged - skipping UI update');
     }
   }
 
-  // Add this helper method to check if data is relevant for counter
-  bool _isCounterRelevantData(Map<String, dynamic> data) {
-    // Check if data contains counter-specific fields
-    final counterFields = [
-      'Jumlah Orang Masuk',
-      'Jumlah Orang Keluar',
-      'system_active',
-      'fan_status',
-      'lamp_status',
-      'ac_status',
-      'dispenser_status',
-      'manual_control',
-      'max_occupancy',
-    ];
-
-    // Check if any counter-relevant field exists in the data
-    for (String field in counterFields) {
-      if (data.containsKey(field)) {
-        return true;
-      }
-    }
-
-    // If no counter fields found, this is probably power monitoring data
-    return false;
-  }
-
-  @override
-  void dispose() {
-    _isDisposed = true;
-    _timer?.cancel();
-    _httpPollingTimer?.cancel();
-    _antaresService.disconnect();
-    super.dispose();
+  void updateDataFromMqtt(Map<String, dynamic> data) {
+    logger.info('Processing MQTT data');
+    _parseAndUpdateData(data);
   }
 
   Future<void> fetchDataFromAntares() async {
@@ -462,72 +492,28 @@ class _CounterScreenState extends State<CounterScreen> {
           if (data['m2m:cin']?['con'] != null) {
             final deviceData = jsonDecode(data['m2m:cin']['con']);
             if (deviceData is Map<String, dynamic>) {
-              // Check if this is counter-relevant data
-              if (!_isCounterRelevantData(deviceData)) {
-                logger.info(
-                  'HTTP response contains non-counter data, ignoring...',
-                );
-                return;
-              }
-
-              // Ambil data baru
-              int newPeopleIn = deviceData['Jumlah Orang Masuk'] ?? 0;
-              int newPeopleOut = deviceData['Jumlah Orang Keluar'] ?? 0;
-              DeviceStatus newDeviceStatus = DeviceStatus.fromJson(deviceData);
-
-              // Cek apakah ada perubahan
-              bool hasChanges = false;
-
-              if (newPeopleIn != _previousPeopleIn ||
-                  newPeopleOut != _previousPeopleOut ||
-                  _previousDeviceStatus == null ||
-                  !newDeviceStatus.isEqual(_previousDeviceStatus!)) {
-                hasChanges = true;
-                logger.info(
-                  'HTTP Counter Data changed - PeopleIn: $newPeopleIn, PeopleOut: $newPeopleOut',
-                );
-              }
-
-              // Hanya update UI jika ada perubahan
-              if (hasChanges) {
-                setState(() {
-                  peopleIn = newPeopleIn;
-                  peopleOut = newPeopleOut;
-                  _deviceStatus = newDeviceStatus;
-
-                  final bool isWeekendDay = isWeekend(now);
-                  final bool isHolidayDay = isHoliday(now);
-                  if (isWeekendDay || isHolidayDay) {
-                    _hasInitialDataOnHoliday = true;
-                  }
-                });
-
-                // Update data sebelumnya
-                _previousPeopleIn = newPeopleIn;
-                _previousPeopleOut = newPeopleOut;
-                _previousDeviceStatus = newDeviceStatus;
-              } else {
-                logger.info('HTTP Counter Data unchanged - skipping UI update');
-              }
+              logger.info('Processing HTTP data');
+              _parseAndUpdateData(
+                deviceData,
+              ); // Gunakan fungsi parsing yang sudah dibuat
             }
           }
         } else {
           logger.severe('Failed to fetch data: ${response.statusCode}');
-          if (!isWeekend(now) && !isHoliday(now)) {
-            await Future.delayed(const Duration(seconds: 5));
-            fetchDataFromAntares();
-          }
         }
       } catch (e) {
         logger.severe('Fetch error: $e');
-        if (!isWeekend(now) && !isHoliday(now)) {
-          await Future.delayed(const Duration(seconds: 5));
-          fetchDataFromAntares();
-        }
       } finally {
         if (mounted) setState(() => isLoading = false);
       }
     }
+  }
+
+  // --- UPDATE: Helper method ini diubah untuk mencari kunci baru ---
+  bool _isCounterRelevantData(Map<String, dynamic> data) {
+    // Cukup cek salah satu kunci unik dari data baru, misal 'current_occupancy_l1'
+    return data.containsKey('current_occupancy_l1') ||
+        data.containsKey('source');
   }
 
   void checkWorkingHours() {
@@ -600,6 +586,42 @@ class _CounterScreenState extends State<CounterScreen> {
     return '';
   }
 
+  // Di dalam _CounterScreenState
+
+  // --- PERUBAHAN: Widget Indikator Mode untuk AppBar ---
+  Widget buildModeIndicatorForAppBar(ControlMode mode) {
+    final bool isOtomatis = mode == ControlMode.otomatis;
+
+    final IconData icon = isOtomatis ? Icons.auto_awesome : Icons.pan_tool;
+    final String text =
+        isOtomatis ? 'Otomatis' : 'Manual'; // Teks lebih singkat
+
+    return Container(
+      margin: const EdgeInsets.only(right: 8), // Beri jarak dari tepi kanan
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        // Warna kontras dengan AppBar
+        color: isOtomatis ? Colors.green.shade400 : Colors.orange.shade400,
+        borderRadius: BorderRadius.circular(20), // Lebih bulat
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 16),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildStatusRow(String name, bool isOn) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -642,6 +664,10 @@ class _CounterScreenState extends State<CounterScreen> {
   }
 
   Widget buildDeviceStatus() {
+    // Ambil data berdasarkan lantai yang dipilih
+    final isLantai1 = _selectedFloor.first == Floor.lantai1;
+    final DeviceStatus status = isLantai1 ? _deviceStatusL1 : _deviceStatusL2;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -655,24 +681,15 @@ class _CounterScreenState extends State<CounterScreen> {
             const SizedBox(height: 8),
             Column(
               children: [
-                buildStatusRow(
-                  'Kipas',
-                  _deviceStatus.systemActive && _deviceStatus.fan,
-                ),
+                buildStatusRow('Kipas', status.systemActive && status.fan),
                 const Divider(),
-                buildStatusRow(
-                  'Lampu',
-                  _deviceStatus.systemActive && _deviceStatus.lamp,
-                ),
+                buildStatusRow('Lampu', status.systemActive && status.lamp),
                 const Divider(),
-                buildStatusRow(
-                  'AC',
-                  _deviceStatus.systemActive && _deviceStatus.ac,
-                ),
+                buildStatusRow('AC', status.systemActive && status.ac),
                 const Divider(),
                 buildStatusRow(
                   'Dispenser',
-                  _deviceStatus.systemActive && _deviceStatus.dispenser,
+                  status.systemActive && status.dispenser,
                 ),
               ],
             ),
@@ -683,6 +700,12 @@ class _CounterScreenState extends State<CounterScreen> {
   }
 
   Widget buildPeopleCounter() {
+    // Ambil data berdasarkan lantai yang dipilih
+    final isLantai1 = _selectedFloor.first == Floor.lantai1;
+    final int peopleIn = isLantai1 ? peopleInL1 : peopleInL2;
+    final int peopleOut = isLantai1 ? peopleOutL1 : peopleOutL2;
+    final DeviceStatus status = isLantai1 ? _deviceStatusL1 : _deviceStatusL2;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -696,7 +719,7 @@ class _CounterScreenState extends State<CounterScreen> {
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 Text(
-                  '$peopleIn/${_deviceStatus.maxOccupancy}',
+                  '$peopleIn/${status.maxOccupancy}',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -706,12 +729,11 @@ class _CounterScreenState extends State<CounterScreen> {
             ),
             const SizedBox(height: 8),
             LinearProgressIndicator(
-              value: peopleIn / _deviceStatus.maxOccupancy,
+              value:
+                  peopleIn /
+                  (status.maxOccupancy == 0 ? 1 : status.maxOccupancy),
               backgroundColor: Colors.grey[200],
-              color:
-                  peopleIn >= _deviceStatus.maxOccupancy
-                      ? Colors.red
-                      : Colors.blue,
+              color: peopleIn >= status.maxOccupancy ? Colors.red : Colors.blue,
             ),
             const SizedBox(height: 18),
             Row(
@@ -737,13 +759,13 @@ class _CounterScreenState extends State<CounterScreen> {
   }
 
   Widget buildSystemStatusCard() {
+    final isLantai1 = _selectedFloor.first == Floor.lantai1;
+    final DeviceStatus status = isLantai1 ? _deviceStatusL1 : _deviceStatusL2;
+
     final bool isWeekendDay = isWeekend(now);
     final bool isHolidayDay = isHoliday(now);
     final bool isSystemReallyActive =
-        !isWeekendDay &&
-        !isHolidayDay &&
-        _deviceStatus.systemActive &&
-        isWorkingHours;
+        !isWeekendDay && !isHolidayDay && status.systemActive && isWorkingHours;
 
     return Card(
       elevation: 2,
@@ -817,23 +839,14 @@ class _CounterScreenState extends State<CounterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ControlMode currentMode =
+        (_selectedFloor.first == Floor.lantai1)
+            ? _deviceStatusL1.controlMode
+            : _deviceStatusL2.controlMode;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Kontrol Otomatis'),
-        actions: [
-          const SizedBox(width: 8),
-          IconButton(
-            icon:
-                isLoading
-                    ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                    : const Icon(Icons.refresh),
-            onPressed: isLoading ? null : fetchDataFromAntares,
-          ),
-        ],
+        actions: [buildModeIndicatorForAppBar(currentMode)],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
@@ -866,6 +879,33 @@ class _CounterScreenState extends State<CounterScreen> {
                   buildConnectionStatusIndicator(),
                 ],
               ),
+
+              const SizedBox(height: 20),
+              Center(
+                child: SegmentedButton<Floor>(
+                  segments: const <ButtonSegment<Floor>>[
+                    ButtonSegment<Floor>(
+                      value: Floor.lantai1,
+                      label: Text('Lantai 1'),
+                      icon: Icon(Icons.looks_one),
+                    ),
+                    ButtonSegment<Floor>(
+                      value: Floor.lantai2,
+                      label: Text('Lantai 2'),
+                      icon: Icon(Icons.looks_two),
+                    ),
+                  ],
+                  selected: _selectedFloor,
+                  onSelectionChanged: (Set<Floor> newSelection) {
+                    setState(() {
+                      _selectedFloor = newSelection;
+                    });
+                  },
+                ),
+              ),
+
+              // const SizedBox(height: 20),
+              // Center(child: buildModeIndicator(currentMode)),
               const SizedBox(height: 20),
               buildPeopleCounter(),
               const SizedBox(height: 20),
@@ -876,7 +916,7 @@ class _CounterScreenState extends State<CounterScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(flex: 2, child: buildSystemStatusCard()),
-                    const SizedBox(width: 70),
+                    const SizedBox(width: 16),
                     Expanded(flex: 1, child: buildManualControlButton()),
                   ],
                 ),

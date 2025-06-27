@@ -456,6 +456,102 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
     }
   }
 
+  Future<void> _sendResetEspCommand() async {
+    if (!_isMqttConnected) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Koneksi Gagal. Tidak dapat mengirim perintah restart.',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final contentPayload = {"source": "flutter_app", "reset_command": 1};
+      final requestId = 'reset_${DateTime.now().millisecondsSinceEpoch}';
+
+      final mqttPayload = {
+        "m2m:rqp": {
+          "fr": _accessKey,
+          "to": "/antares-cse/antares-id/$_projectName/$_deviceName/la",
+          "op": 1,
+          "rqi": requestId,
+          "pc": {
+            "m2m:cin": {"cnf": "message", "con": jsonEncode(contentPayload)},
+          },
+          "ty": 4,
+        },
+      };
+
+      final builder = MqttClientPayloadBuilder();
+      builder.addString(jsonEncode(mqttPayload));
+
+      client?.publishMessage(
+        _requestTopic,
+        MqttQos.atLeastOnce,
+        builder.payload!,
+      );
+
+      logger.info('Perintah restart ESP berhasil dikirim.');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Perintah restart ESP berhasil dikirim ke perangkat.',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e, s) {
+      logger.severe('Gagal mengirim perintah restart ESP: $e\n$s');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal mengirim perintah restart: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // --- TAMBAHAN: Dialog konfirmasi sebelum reset ---
+  void _showResetConfirmationDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Konfirmasi Restart Perangkat'),
+          content: const Text(
+            'Apakah Anda yakin ingin merestart perangkat ESP? Tindakan ini akan memulai ulang perangkat.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Batal'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Ya, Restart'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _sendResetEspCommand();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -731,6 +827,25 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Divider(),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.restart_alt),
+                    label: const Text('Restart Perangkat ESP'),
+                    onPressed: _showResetConfirmationDialog,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red.shade700,
+                      side: BorderSide(color: Colors.red.shade700, width: 1.5),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                   ),
                 ),

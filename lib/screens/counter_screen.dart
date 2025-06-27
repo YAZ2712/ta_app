@@ -59,6 +59,7 @@ class DeviceStatus {
     Map<String, dynamic> json, {
     String prefix = '',
   }) {
+    // Helper function untuk konversi nilai apapun ke boolean
     bool convertToBool(dynamic value) {
       if (value is bool) return value;
       if (value is int) return value != 0;
@@ -68,14 +69,23 @@ class DeviceStatus {
       return false;
     }
 
-    final String modeStr = json['control_mode$prefix'] ?? 'otomatis';
+    // --- PERUBAHAN LOGIKA DIMULAI DI SINI ---
+    // 1. Ambil nilai 'manual_control' dari JSON.
+    //    Ini adalah kunci global, jadi tidak perlu prefix.
+    // 2. Jika kunci tidak ada (null), kita anggap nilainya 0 (mode otomatis) sebagai default.
+    final int manualControlValue = json['manual_control'] ?? 0;
+
+    // 3. Tentukan ControlMode berdasarkan nilai tersebut.
+    //    Jika manual_control adalah 1, set mode ke Manual. Jika tidak, Otomatis.
     final ControlMode mode =
-        modeStr.toLowerCase() == 'manual'
-            ? ControlMode.manual
-            : ControlMode.otomatis;
-    // Gunakan prefix untuk mendapatkan kunci yang benar
+        (manualControlValue == 1) ? ControlMode.manual : ControlMode.otomatis;
+    // --- AKHIR PERUBAHAN LOGIKA ---
+
+    // Gunakan prefix untuk mendapatkan kunci status perangkat per lantai
     final systemActive = convertToBool(json['system_active$prefix']);
+
     return DeviceStatus(
+      // Status perangkat tetap bergantung pada systemActive per lantai
       fan: systemActive ? convertToBool(json['fan_status$prefix']) : false,
       lamp: systemActive ? convertToBool(json['lamp_status$prefix']) : false,
       ac: systemActive ? convertToBool(json['ac_status$prefix']) : false,
@@ -83,6 +93,8 @@ class DeviceStatus {
           systemActive ? convertToBool(json['dispenser_status$prefix']) : false,
       systemActive: systemActive,
       maxOccupancy: json['max_occupancy'] is int ? json['max_occupancy'] : 10,
+
+      // Gunakan mode yang sudah kita tentukan dari 'manual_control'
       controlMode: mode,
     );
   }
@@ -586,33 +598,26 @@ class _CounterScreenState extends State<CounterScreen> {
     return '';
   }
 
-  // Di dalam _CounterScreenState
-
   // --- PERUBAHAN: Widget Indikator Mode untuk AppBar ---
-  Widget buildModeIndicatorForAppBar(ControlMode mode) {
+  Widget buildModeIndicator(ControlMode mode) {
     final bool isOtomatis = mode == ControlMode.otomatis;
-
     final IconData icon = isOtomatis ? Icons.auto_awesome : Icons.pan_tool;
     final String text =
-        isOtomatis ? 'Otomatis' : 'Manual'; // Teks lebih singkat
+        isOtomatis ? 'Mode Otomatis Aktif' : 'Mode Kontrol Manual Aktif';
+    final Color color = isOtomatis ? Colors.green : Colors.orange;
 
     return Container(
-      margin: const EdgeInsets.only(right: 8), // Beri jarak dari tepi kanan
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        // Warna kontras dengan AppBar
-        color: isOtomatis ? Colors.green.shade400 : Colors.orange.shade400,
-        borderRadius: BorderRadius.circular(20), // Lebih bulat
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: color.withOpacity(0.1), // Warna latar yang lembut
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: Colors.white, size: 16),
-          const SizedBox(width: 6),
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 8),
           Text(
             text,
-            style: const TextStyle(
-              color: Colors.white,
+            style: TextStyle(
+              color: color,
               fontWeight: FontWeight.bold,
               fontSize: 14,
             ),
@@ -823,17 +828,43 @@ class _CounterScreenState extends State<CounterScreen> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          _isConnectedToAntares ? Icons.cloud_done : Icons.cloud_off,
+          Icons.circle,
           color: _isConnectedToAntares ? Colors.green : Colors.red,
+          size: 12,
         ),
         const SizedBox(width: 4),
         Text(
-          _isConnectedToAntares ? 'Terhubung ke Antares' : 'Tidak terhubung',
+          _isConnectedToAntares ? 'Online' : 'Offline',
           style: TextStyle(
             color: _isConnectedToAntares ? Colors.green : Colors.red,
           ),
         ),
       ],
+    );
+  }
+
+  Widget buildConnectionStatusForAppBar() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 16.0), // Beri jarak dari tepi kanan
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.circle,
+            color:
+                _isConnectedToAntares ? Colors.greenAccent : Colors.redAccent,
+            size: 12,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            _isConnectedToAntares ? 'Online' : 'Offline',
+            style: const TextStyle(
+              color: Colors.white, // Agar kontras dengan AppBar
+              fontSize: 14,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -846,86 +877,101 @@ class _CounterScreenState extends State<CounterScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Kontrol Otomatis'),
-        actions: [buildModeIndicatorForAppBar(currentMode)],
+        actions: [buildConnectionStatusForAppBar()],
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${getIndonesianDay(now.weekday)}, ${now.day} ${getIndonesianMonth(now.month)} ${now.year}',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        DateFormat('HH:mm:ss').format(now),
-                        style: const TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  buildConnectionStatusIndicator(),
-                ],
-              ),
-
-              const SizedBox(height: 20),
-              Center(
-                child: SegmentedButton<Floor>(
-                  segments: const <ButtonSegment<Floor>>[
-                    ButtonSegment<Floor>(
-                      value: Floor.lantai1,
-                      label: Text('Lantai 1'),
-                      icon: Icon(Icons.looks_one),
-                    ),
-                    ButtonSegment<Floor>(
-                      value: Floor.lantai2,
-                      label: Text('Lantai 2'),
-                      icon: Icon(Icons.looks_two),
-                    ),
-                  ],
-                  selected: _selectedFloor,
-                  onSelectionChanged: (Set<Floor> newSelection) {
-                    setState(() {
-                      _selectedFloor = newSelection;
-                    });
-                  },
-                ),
-              ),
-
-              // const SizedBox(height: 20),
-              // Center(child: buildModeIndicator(currentMode)),
-              const SizedBox(height: 20),
-              buildPeopleCounter(),
-              const SizedBox(height: 20),
-              buildDeviceStatus(),
-              const SizedBox(height: 20),
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Column(
+          children: [
+            buildModeIndicator(currentMode),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(flex: 2, child: buildSystemStatusCard()),
-                    const SizedBox(width: 16),
-                    Expanded(flex: 1, child: buildManualControlButton()),
+                    // --- PERUBAHAN DIMULAI DI SINI ---
+                    Row(
+                      // 1. Ubah Column menjadi Row
+                      mainAxisAlignment:
+                          MainAxisAlignment
+                              .spaceBetween, // 2. Agar item terpisah ke ujung
+                      crossAxisAlignment:
+                          CrossAxisAlignment
+                              .end, // 3. Agar baseline teks sejajar
+                      children: [
+                        // Widget untuk tanggal tetap sama
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${getIndonesianDay(now.weekday)}, ${now.day} ${getIndonesianMonth(now.month)} ${now.year}',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        // Widget untuk jam sekarang berdiri sendiri di dalam Row
+                        Text(
+                          DateFormat('HH:mm:ss').format(now),
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // --- AKHIR PERUBAHAN ---
+                    const SizedBox(height: 20),
+                    Center(
+                      child: SegmentedButton<Floor>(
+                        segments: const <ButtonSegment<Floor>>[
+                          ButtonSegment<Floor>(
+                            value: Floor.lantai1,
+                            label: Text('Lantai 1'),
+                            icon: Icon(Icons.looks_one),
+                          ),
+                          ButtonSegment<Floor>(
+                            value: Floor.lantai2,
+                            label: Text('Lantai 2'),
+                            icon: Icon(Icons.looks_two),
+                          ),
+                        ],
+                        selected: _selectedFloor,
+                        onSelectionChanged: (Set<Floor> newSelection) {
+                          setState(() {
+                            _selectedFloor = newSelection;
+                          });
+                        },
+                      ),
+                    ),
+
+                    const SizedBox(height: 20),
+                    buildPeopleCounter(),
+                    const SizedBox(height: 20),
+                    buildDeviceStatus(),
+                    const SizedBox(height: 20),
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(flex: 2, child: buildSystemStatusCard()),
+                          const SizedBox(width: 16),
+                          Expanded(flex: 1, child: buildManualControlButton()),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
       floatingActionButton: FloatingActionButton(
+        // ... (Kode floating action button tetap sama) ...
         onPressed: isLoading ? null : fetchDataFromAntares,
         tooltip: 'Refresh',
         child:

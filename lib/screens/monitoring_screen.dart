@@ -104,29 +104,23 @@ class AntaresMqttService {
       final data = jsonDecode(payload);
       Map<String, dynamic>? contentData;
 
-      // Coba ekstrak data dari format Antares
       if (data['m2m:rsp'] != null &&
           data['m2m:rsp']['m2m:cin'] != null &&
           data['m2m:rsp']['m2m:cin']['con'] != null) {
-        // Pastikan con adalah string sebelum decode JSON lagi
         final conData = data['m2m:rsp']['m2m:cin']['con'];
         if (conData is String) {
           contentData = jsonDecode(conData);
         } else {
           contentData = conData;
         }
-      }
-      // Jika datanya langsung
-      else if (data['con'] != null) {
+      } else if (data['con'] != null) {
         final conData = data['con'];
         if (conData is String) {
           contentData = jsonDecode(conData);
         } else {
           contentData = conData;
         }
-      }
-      // Jika data langsung dikirim sebagai JSON root
-      else if (data['voltage'] != null || data['power'] != null) {
+      } else if (data['voltage'] != null || data['power'] != null) {
         contentData = data;
       }
 
@@ -149,7 +143,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   bool isLoading = false;
   bool _isConnectedToAntares = false;
   bool _isDisposed = false;
-  bool _isResetting = false;
+  // bool _isResetting = false; // <-- DIHAPUS
   bool _has80PercentNotified = false;
   bool _has90PercentNotified = false;
   bool _hasLimitReachedNotified = false;
@@ -157,7 +151,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   Timer? _httpPollingTimer;
   late AntaresMqttService _antaresService;
 
-  // Monitoring data that matches the exact JSON structure from Antares
+  // Monitoring data
   double voltage = 0.0;
   double current = 0.0;
   double power = 0.0;
@@ -168,9 +162,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   double totalCost = 0.0;
 
   // Limit Energy data
-  double energyLimit = 0.0; // Limit energy yang diterima dari Antares
-  bool isLimitActive = false; // Status apakah limit aktif
-  String limitStatus = 'Tidak Aktif'; // Status text untuk limit
+  double energyLimit = 0.0;
+  bool isLimitActive = false;
+  String limitStatus = 'Tidak Aktif';
 
   @override
   void initState() {
@@ -190,8 +184,16 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     _checkNotificationPermissions();
   }
 
+  @override
+  void dispose() {
+    _isDisposed = true;
+    _timer?.cancel();
+    _httpPollingTimer?.cancel();
+    _antaresService.disconnect();
+    super.dispose();
+  }
+
   Future<void> _checkNotificationPermissions() async {
-    // <-- METHOD PINDAHAN
     try {
       final status = await Permission.notification.status;
       if (status.isDenied) {
@@ -202,9 +204,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     }
   }
 
-  // Method dari EnhancedMonitoringScreen dipindahkan ke sini
   void _showPermissionDialog() {
-    // <-- METHOD PINDAHAN
     showDialog(
       context: context,
       builder:
@@ -264,7 +264,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   ) {
     showDialog(
       context: context,
-      barrierDismissible: false, // User harus menekan tombol untuk menutup
+      barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
           shape: RoundedRectangleBorder(
@@ -356,27 +356,21 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     );
   }
 
-  // 2. Method untuk notifikasi dengan SUARA/VIBRATION (opsional)
   void _showLimitNotificationWithAlert(
     String title,
     String message,
     Color color,
     IconData icon,
   ) {
-    // Tampilkan pop-up dialog
     _showLimitPopupNotification(title, message, color, icon);
-
-    // OPSIONAL: Tambahkan vibration jika ingin
-    HapticFeedback.heavyImpact(); // Perlu import 'package:flutter/services.dart';
+    HapticFeedback.heavyImpact();
   }
 
-  // 3. Modifikasi method _checkAndShowLimitNotifications untuk menggunakan pop-up
   void _checkAndShowLimitNotifications() {
     if (energyLimit <= 0) return;
 
     double percentage = (dailyEnergy / energyLimit * 100);
 
-    // Notifikasi 80% - POP UP
     if (percentage >= 80 && !_has80PercentNotified) {
       _has80PercentNotified = true;
       _has90PercentNotified = false;
@@ -388,9 +382,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         Colors.orange,
         Icons.warning_amber,
       );
-    }
-    // Notifikasi 90% - POP UP
-    else if (percentage >= 90 && !_has90PercentNotified) {
+    } else if (percentage >= 90 && !_has90PercentNotified) {
       _has90PercentNotified = true;
       _has80PercentNotified = true;
       _hasLimitReachedNotified = false;
@@ -401,9 +393,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         Colors.deepOrange,
         Icons.warning,
       );
-    }
-    // Notifikasi 100% - POP UP
-    else if (percentage >= 100 && !_hasLimitReachedNotified) {
+    } else if (percentage >= 100 && !_hasLimitReachedNotified) {
       _hasLimitReachedNotified = true;
       _has80PercentNotified = true;
       _has90PercentNotified = true;
@@ -414,9 +404,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         Colors.red,
         Icons.block,
       );
-    }
-    // Reset notifikasi jika penggunaan turun
-    else if (percentage < 80) {
+    } else if (percentage < 80) {
       _has80PercentNotified = false;
       _has90PercentNotified = false;
       _hasLimitReachedNotified = false;
@@ -434,114 +422,10 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _isDisposed = true;
-    _timer?.cancel();
-    _httpPollingTimer?.cancel();
-    _antaresService.disconnect();
-    super.dispose();
-  }
-
-  Future<void> _sendResetCommand() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isResetting = true;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Mengirim perintah reset...'),
-        backgroundColor: Colors.orange,
-      ),
-    );
-
-    try {
-      const String url =
-          'https://platform.antares.id:8443/~/antares-cse/antares-id/TADKT-1/PMM';
-      final Map<String, String> headers = {
-        'X-M2M-Origin': 'fe5c7a15d8c13220:bfd764392a99a094',
-        'Content-Type': 'application/json;ty=4',
-        'Accept': 'application/json',
-      };
-      final Map<String, dynamic> payload = {
-        'm2m:cin': {
-          'con': jsonEncode({
-            // Gunakan jsonEncode untuk membuat string JSON yang valid
-            "resetFlag": 1, // <-- Ini adalah KUNCI-nya!
-            "command_id":
-                DateTime.now().millisecondsSinceEpoch, // Opsional, untuk jejak
-          }),
-        },
-      };
-
-      final response = await http
-          .post(Uri.parse(url), headers: headers, body: jsonEncode(payload))
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 201) {
-        logger.info('Reset command sent successfully.');
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Perintah reset berhasil dikirim!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      } else {
-        logger.severe(
-          'Failed to send reset command: ${response.statusCode} - ${response.body}',
-        );
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Gagal mengirim perintah: ${response.statusCode}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      logger.severe('Error sending reset command: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Terjadi error: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isResetting = false);
-      }
-    }
-  }
-
-  // --- DIALOG KONFIRMASI RESET ---
-  void _showResetConfirmationDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Konfirmasi Reset'),
-          content: const Text(
-            'Apakah Anda yakin ingin merestart perangkat ESP?',
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Batal'),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('Ya, Reset'),
-              onPressed: () {
-                Navigator.of(context).pop();
-                _sendResetCommand();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
+  // --- KODE RESET DIHAPUS DARI SINI ---
+  // Future<void> _sendResetCommand() async { ... } // <-- DIHAPUS
+  // void _showResetConfirmationDialog() { ... } // <-- DIHAPUS
+  // --- AKHIR PENGHAPUSAN ---
 
   void updateDataFromMqtt(Map<String, dynamic> data) {
     if (!mounted) return;
@@ -549,7 +433,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     logger.info('Updating UI with MQTT data: $data');
     if (mounted && !_isDisposed) {
       setState(() {
-        // Match exact field names from the JSON
         if (data['Voltage'] != null) {
           voltage = double.tryParse(data['Voltage'].toString()) ?? voltage;
         }
@@ -571,8 +454,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
               double.tryParse(data['DailyEnergy'].toString()) ?? dailyEnergy;
         }
 
-        // PERBAIKAN: Update limit energy data dengan field name yang benar
-        // Cek berbagai kemungkinan field name untuk energy limit
         if (data['energyLimit2'] != null) {
           energyLimit =
               double.tryParse(data['energyLimit2'].toString()) ?? energyLimit;
@@ -584,7 +465,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
               double.tryParse(data['energyLimit'].toString()) ?? energyLimit;
         }
 
-        // Cek status limit dari berbagai field
         if (data['statusLimit80'] != null) {
           isLimitActive = data['statusLimit80'].toString() == '1';
         } else if (data['statusLimit90'] != null) {
@@ -595,8 +475,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
               data['LimitStatus'].toString() == '1';
         }
 
-        // 1. Mengambil data Total Emisi CO2
-        // Cek beberapa kemungkinan nama field: 'TotalCO2', 'TotalCO2', 'total_co2'
         if (data['TotalCO2'] != null) {
           totalCO2 = double.tryParse(data['TotalCO2'].toString()) ?? totalCO2;
         } else if (data['TotalCO2'] != null) {
@@ -605,8 +483,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           totalCO2 = double.tryParse(data['TotalCO2'].toString()) ?? totalCO2;
         }
 
-        // 2. Mengambil data Total Biaya
-        // Cek beberapa kemungkinan nama field: 'TotalCost', 'TotalCost', 'total_biaya'
         if (data['TotalCost'] != null) {
           totalCost =
               double.tryParse(data['TotalCost'].toString()) ?? totalCost;
@@ -617,7 +493,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           totalCO2 = double.tryParse(data['TotalCost'].toString()) ?? totalCost;
         }
 
-        // Update limit status
         _updateLimitStatus();
       });
     }
@@ -638,7 +513,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     _checkAndShowLimitNotifications();
   }
 
-  // Perbaikan pada fetchDataFromAntares
   Future<void> fetchDataFromAntares() async {
     if (isLoading || !mounted) return;
 
@@ -660,12 +534,10 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         logger.info('Successfully fetched data from Antares');
         final data = jsonDecode(response.body);
         if (data['m2m:cin']?['con'] != null) {
-          // Handle different possible formats of 'con'
           dynamic conData = data['m2m:cin']['con'];
           Map<String, dynamic> deviceData;
 
           if (conData is String) {
-            // If con is a JSON string, parse it
             try {
               deviceData = jsonDecode(conData);
               logger.info('Parsed JSON data from con string: $deviceData');
@@ -674,7 +546,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
               deviceData = {'con': conData};
             }
           } else if (conData is Map) {
-            // If con is already a Map
             deviceData = Map<String, dynamic>.from(conData);
             logger.info('Con is already a Map: $deviceData');
           } else {
@@ -684,7 +555,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
           if (mounted && !_isDisposed) {
             setState(() {
-              // Match exact field names from the JSON
               if (deviceData['Voltage'] != null) {
                 voltage =
                     double.tryParse(deviceData['Voltage'].toString()) ??
@@ -714,7 +584,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                     dailyEnergy;
               }
 
-              // Cek berbagai kemungkinan field name untuk energy limit
               if (deviceData['energyLimit2'] != null) {
                 energyLimit =
                     double.tryParse(deviceData['energyLimit2'].toString()) ??
@@ -732,7 +601,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                 logger.info('Found energyLimit: $energyLimit');
               }
 
-              // Cek status limit dari berbagai field
               if (deviceData['statusLimit80'] != null) {
                 isLimitActive = deviceData['statusLimit80'].toString() == '1';
                 logger.info('Found statusLimit80: $isLimitActive');
@@ -761,8 +629,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                     totalCO2;
               }
 
-              // 2. Mengambil data Total Biaya
-              // Cek beberapa kemungkinan nama field: 'TotalCost', 'TotalCost', 'total_biaya'
               if (deviceData['TotalCost'] != null) {
                 totalCost =
                     double.tryParse(deviceData['TotalCost'].toString()) ??
@@ -777,10 +643,8 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                     totalCost;
               }
 
-              // Update limit status
               _updateLimitStatus();
 
-              // Log untuk debugging
               logger.info(
                 'Updated energyLimit: $energyLimit, isLimitActive: $isLimitActive, limitStatus: $limitStatus',
               );
@@ -813,7 +677,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            // ICON
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -823,8 +686,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
               child: Icon(icon, color: iconColor ?? Colors.black, size: 28),
             ),
             const SizedBox(width: 16),
-
-            // TEXTS
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -885,22 +746,19 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.start, // Align ke atas
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
                   'LIMIT ENERGI HARIAN',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                 ),
-                // Gunakan Flexible atau Expanded agar bisa wrap
                 Flexible(
                   child: Wrap(
-                    // Wrap akan otomatis ke baris baru jika tidak cukup
                     alignment: WrapAlignment.end,
                     crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8, // Jarak antar item
+                    spacing: 8,
                     children: [
-                      buildNotificationIndicator(), // Chip "PERINGATAN 80%+"
-                      // Gabungkan Ikon dan Status
+                      buildNotificationIndicator(),
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -923,7 +781,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Progress bar
             if (energyLimit > 0) ...[
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -977,7 +834,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
             const SizedBox(height: 16),
 
-            // Sisa energi yang bisa digunakan
             if (energyLimit > 0) ...[
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -1027,7 +883,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     );
   }
 
-  // 6. OPSIONAL: Tambahkan indokator visual di UI untuk status notifikasi
   Widget buildNotificationIndicator() {
     if (energyLimit <= 0) return const SizedBox.shrink();
 
@@ -1036,10 +891,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     if (percentage >= 100) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        // decoration: BoxDecoration(
-        //   // color: Colors.red,
-        //   // borderRadius: BorderRadius.circular(12),
-        // ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1059,10 +910,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     } else if (percentage >= 90) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        // decoration: BoxDecoration(
-        //   color: Colors.deepOrange,
-        //   borderRadius: BorderRadius.circular(12),
-        // ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1082,10 +929,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     } else if (percentage >= 80) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        // decoration: BoxDecoration(
-        //   color: Colors.orange,
-        //   borderRadius: BorderRadius.circular(12),
-        // ),
         child: const Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1245,7 +1088,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Time display card
               Card(
                 elevation: 3,
                 shape: RoundedRectangleBorder(
@@ -1272,81 +1114,41 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                   ),
                 ),
               ),
-
-              // _buildNotificationSettings(),
-              // const SizedBox(height: 16),
+              const SizedBox(height: 16),
               buildPowerDetails(),
               const SizedBox(height: 16),
-
-              // Limit Energy Card - NEW
               buildLimitEnergyCard(),
               const SizedBox(height: 16),
 
               // --- INILAH BAGIAN YANG DIUBAH ---
-              Row(
-                children: [
-                  // Tombol Atur Limit
-                  Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: ElevatedButton(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const LimitenergyScreen(),
-                            ),
-                          ).then((_) {
-                            fetchDataFromAntares();
-                          });
-                        },
-                        style: ElevatedButton.styleFrom(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          backgroundColor: Colors.indigo,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text(
-                          'Atur Limit',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+              // Widget Row yang berisi dua tombol kini diganti dengan satu tombol saja.
+              SizedBox(
+                width: double.infinity, // Membuat tombol memenuhi lebar layar
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const LimitenergyScreen(),
                       ),
+                    ).then((_) {
+                      // Ambil data terbaru setelah kembali dari halaman limit
+                      fetchDataFromAntares();
+                    });
+                  },
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
                     ),
+                    backgroundColor: Colors.indigo,
+                    foregroundColor: Colors.white,
                   ),
-                  const SizedBox(width: 12),
-                  // Tombol Reset Perangkat
-                  Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: OutlinedButton.icon(
-                        onPressed:
-                            _isResetting ? null : _showResetConfirmationDialog,
-                        icon:
-                            _isResetting
-                                ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                                : const Icon(Icons.restart_alt),
-                        label: const Text('Reset ESP'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.red,
-                          side: const BorderSide(color: Colors.red),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                    ),
+                  child: const Text(
+                    'Atur Limit',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
-                ],
+                ),
               ),
 
               // --- AKHIR DARI BAGIAN YANG DIUBAH ---
@@ -1360,7 +1162,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                 iconColor: Colors.amber[700],
               ),
               const SizedBox(height: 12),
-
               buildInfoCard(
                 icon: Icons.watch_later_outlined,
                 title: 'TOTAL ENERGI',
@@ -1369,7 +1170,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                 iconColor: Colors.blue[700],
               ),
               const SizedBox(height: 12),
-
               buildInfoCard(
                 icon: Icons.cloud_outlined,
                 title: 'TOTAL CO₂',
@@ -1378,7 +1178,6 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
                 iconColor: Colors.green[700],
               ),
               const SizedBox(height: 12),
-
               buildInfoCard(
                 icon: Icons.attach_money,
                 title: 'TOTAL BIAYA',

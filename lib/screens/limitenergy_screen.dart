@@ -456,13 +456,13 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
     }
   }
 
-  Future<void> _sendResetEspCommand() async {
+  Future<void> _sendEnergyDataResetCommand() async {
     if (!_isMqttConnected) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Koneksi Gagal. Tidak dapat mengirim perintah restart.',
+              'Koneksi Gagal. Tidak dapat mengirim perintah reset data.',
             ),
             backgroundColor: Colors.red,
           ),
@@ -472,13 +472,17 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
     }
 
     try {
-      final contentPayload = {"source": "flutter_app", "reset_command": 1};
-      final requestId = 'reset_${DateTime.now().millisecondsSinceEpoch}';
+      // UBAH: Payload sekarang mengirim `resetFlag: 1`
+      final contentPayload = {"resetFlag": 1};
+      final requestId = 'reset_data_${DateTime.now().millisecondsSinceEpoch}';
 
       final mqttPayload = {
         "m2m:rqp": {
           "fr": _accessKey,
-          "to": "/antares-cse/antares-id/$_projectName/$_deviceName/la",
+          // UBAH: Target diubah dari /la menjadi langsung ke device
+          // Ini memastikan perintah dikirim bahkan jika device sedang offline
+          // dan akan diterima saat device kembali online (jika QoS > 0).
+          "to": "/antares-cse/antares-id/$_projectName/$_deviceName",
           "op": 1,
           "rqi": requestId,
           "pc": {
@@ -497,23 +501,23 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
         builder.payload!,
       );
 
-      logger.info('Perintah restart ESP berhasil dikirim.');
+      logger.info('Perintah reset data energi berhasil dikirim.');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Perintah restart ESP berhasil dikirim ke perangkat.',
+              'Perintah reset data energi berhasil dikirim ke perangkat.',
             ),
             backgroundColor: Colors.green,
           ),
         );
       }
     } catch (e, s) {
-      logger.severe('Gagal mengirim perintah restart ESP: $e\n$s');
+      logger.severe('Gagal mengirim perintah reset data energi: $e\n$s');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Gagal mengirim perintah restart: ${e.toString()}'),
+            content: Text('Gagal mengirim perintah reset: ${e.toString()}'),
             backgroundColor: Colors.red,
           ),
         );
@@ -522,14 +526,14 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
   }
 
   // --- TAMBAHAN: Dialog konfirmasi sebelum reset ---
-  void _showResetConfirmationDialog() {
+  void _showDataResetConfirmationDialog() {
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Konfirmasi Restart Perangkat'),
+          title: const Text('Konfirmasi Reset Data Energi'),
           content: const Text(
-            'Apakah Anda yakin ingin merestart perangkat ESP? Tindakan ini akan memulai ulang perangkat.',
+            'Anda yakin ingin mereset data penggunaan energi (harian, total, per jam) pada perangkat? Batas energi juga akan kembali ke nilai default. Tindakan ini tidak dapat diurungkan.',
           ),
           actions: <Widget>[
             TextButton(
@@ -540,10 +544,11 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
             ),
             TextButton(
               style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('Ya, Restart'),
+              child: const Text('Ya, Reset Data'),
               onPressed: () {
                 Navigator.of(context).pop();
-                _sendResetEspCommand();
+                // Memanggil fungsi baru
+                _sendEnergyDataResetCommand();
               },
             ),
           ],
@@ -557,8 +562,8 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Atur Limit Energy'),
-        backgroundColor: Colors.indigo,
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.indigo.shade400,
+        foregroundColor: Colors.grey.shade50,
         elevation: 0,
         actions: [
           // Connection Status Indicator - Improved design
@@ -837,8 +842,8 @@ class _LimitenergyScreenState extends State<LimitenergyScreen> {
                   width: double.infinity,
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.restart_alt),
-                    label: const Text('Restart Perangkat ESP'),
-                    onPressed: _showResetConfirmationDialog,
+                    label: const Text('Restart Data Energi'),
+                    onPressed: _showDataResetConfirmationDialog,
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.red.shade700,
                       side: BorderSide(color: Colors.red.shade700, width: 1.5),

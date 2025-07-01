@@ -22,9 +22,11 @@ class AntaresMqttService {
   final String projectName = 'TADKT-1';
   final String deviceName = 'PMM';
   late MqttServerClient client;
-  final Function(Map<String, dynamic>) onDataReceived;
-  final Function(bool) onConnectionStatusChanged;
   final logger = Logger('AntaresMqttService');
+  bool _manualDisconnect = false;
+
+  Function(Map<String, dynamic>)? onDataReceived;
+  Function(bool)? onConnectionStatusChanged;
 
   AntaresMqttService({
     required this.onDataReceived,
@@ -33,6 +35,7 @@ class AntaresMqttService {
 
   Future<void> connect() async {
     try {
+      _manualDisconnect = false;
       client = MqttServerClient(
         'mqtt.antares.id',
         'dart_client_${DateTime.now().millisecondsSinceEpoch}',
@@ -56,14 +59,18 @@ class AntaresMqttService {
       await client.connect();
     } catch (e) {
       logger.severe('Connection exception: $e');
-      await _reconnect();
+      if (!_manualDisconnect) {
+        await _reconnect();
+      }
     }
   }
 
   Future<void> _reconnect() async {
+    if (_manualDisconnect) return;
     logger.info('Attempting reconnect...');
     await Future.delayed(const Duration(seconds: 5));
-    if (client.connectionStatus?.state != MqttConnectionState.connected) {
+    if (client.connectionStatus?.state != MqttConnectionState.connected &&
+        !_manualDisconnect) {
       await connect();
     }
   }
@@ -81,7 +88,7 @@ class AntaresMqttService {
 
   void _onConnected() {
     logger.info('Connected to Antares');
-    onConnectionStatusChanged(true);
+    onConnectionStatusChanged?.call(true);
 
     final topic =
         '/oneM2M/resp/antares-cse/fe5c7a15d8c13220:bfd764392a99a094/json';
@@ -91,7 +98,12 @@ class AntaresMqttService {
 
   void _onDisconnected() {
     logger.warning('Disconnected from Antares');
-    onConnectionStatusChanged(false);
+    onConnectionStatusChanged?.call(false);
+
+    if (_manualDisconnect) {
+      logger.info('Manual disconnect initiated. Not attempting to reconnect');
+      return;
+    }
     Future.delayed(const Duration(seconds: 5), () {
       if (client.connectionStatus?.state != MqttConnectionState.connected) {
         connect();
@@ -125,7 +137,7 @@ class AntaresMqttService {
       }
 
       if (contentData != null) {
-        onDataReceived(contentData);
+        onDataReceived?.call(contentData);
       }
     } catch (e) {
       logger.severe('Error processing MQTT data: $e');
@@ -133,7 +145,17 @@ class AntaresMqttService {
   }
 
   void disconnect() {
+    _manualDisconnect = true;
     client.disconnect();
+  }
+
+  void dispose() {
+    logger.info('Disposing AntaresMqttService...');
+    // Langkah 1: Putuskan hubungan dengan UI SEBELUM disconnect
+    onDataReceived = null;
+    onConnectionStatusChanged = null;
+    // Langkah 2: Baru lakukan disconnect
+    disconnect();
   }
 }
 
@@ -189,7 +211,7 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     _isDisposed = true;
     _timer?.cancel();
     _httpPollingTimer?.cancel();
-    _antaresService.disconnect();
+    _antaresService.dispose();
     super.dispose();
   }
 
@@ -1061,8 +1083,9 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('MONITORING'),
-        backgroundColor: Colors.indigo,
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.indigo.shade400,
+        foregroundColor: Colors.grey.shade50,
+        elevation: 0,
         actions: [
           buildConnectionStatusIndicator(),
           const SizedBox(width: 8),
@@ -1082,114 +1105,129 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Card(
-                elevation: 3,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'WAKTU SEKARANG',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.indigo[800],
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.indigo.shade400, Colors.grey.shade50],
+          ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Card(
+                  elevation: 3,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'WAKTU SEKARANG',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.indigo[800],
+                          ),
                         ),
-                      ),
-                      Text(
-                        DateFormat('HH:mm:ss').format(now),
-                        style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              buildPowerDetails(),
-              const SizedBox(height: 16),
-              buildLimitEnergyCard(),
-              const SizedBox(height: 16),
-
-              // --- INILAH BAGIAN YANG DIUBAH ---
-              // Widget Row yang berisi dua tombol kini diganti dengan satu tombol saja.
-              SizedBox(
-                width: double.infinity, // Membuat tombol memenuhi lebar layar
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const LimitenergyScreen(),
-                      ),
-                    ).then((_) {
-                      // Ambil data terbaru setelah kembali dari halaman limit
-                      fetchDataFromAntares();
-                    });
-                  },
-                  style: ElevatedButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                        Text(
+                          DateFormat('HH:mm:ss').format(now),
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
                     ),
-                    backgroundColor: Colors.indigo,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text(
-                    'Atur Limit',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                 ),
-              ),
+                const SizedBox(height: 16),
+                buildPowerDetails(),
+                const SizedBox(height: 16),
+                buildLimitEnergyCard(),
+                const SizedBox(height: 16),
 
-              // --- AKHIR DARI BAGIAN YANG DIUBAH ---
-              const SizedBox(height: 16),
+                // --- INILAH BAGIAN YANG DIUBAH ---
+                // Widget Row yang berisi dua tombol kini diganti dengan satu tombol saja.
+                SizedBox(
+                  width: double.infinity, // Membuat tombol memenuhi lebar layar
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const LimitenergyScreen(),
+                        ),
+                      ).then((_) {
+                        // Ambil data terbaru setelah kembali dari halaman limit
+                        fetchDataFromAntares();
+                      });
+                    },
+                    style: ElevatedButton.styleFrom(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      backgroundColor: Colors.indigo,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text(
+                      'Atur Limit',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
 
-              buildInfoCard(
-                icon: Icons.bolt,
-                title: 'TOTAL ENERGI / HARI',
-                value: dailyEnergy.toStringAsFixed(1),
-                unit: 'kWh',
-                iconColor: Colors.amber[700],
-              ),
-              const SizedBox(height: 12),
-              buildInfoCard(
-                icon: Icons.watch_later_outlined,
-                title: 'TOTAL ENERGI',
-                value: totalEnergy.toStringAsFixed(1),
-                unit: 'kWh',
-                iconColor: Colors.blue[700],
-              ),
-              const SizedBox(height: 12),
-              buildInfoCard(
-                icon: Icons.cloud_outlined,
-                title: 'TOTAL CO₂',
-                value: totalCO2.toStringAsFixed(1),
-                unit: 'kg',
-                iconColor: Colors.green[700],
-              ),
-              const SizedBox(height: 12),
-              buildInfoCard(
-                icon: Icons.attach_money,
-                title: 'TOTAL BIAYA',
-                value: NumberFormat.currency(
-                  locale: 'id',
-                  symbol: 'Rp',
-                  decimalDigits: 0,
-                ).format(totalCost),
-                unit: '',
-                iconColor: Colors.purple[700],
-              ),
-            ],
+                // --- AKHIR DARI BAGIAN YANG DIUBAH ---
+                const SizedBox(height: 16),
+
+                buildInfoCard(
+                  icon: Icons.bolt,
+                  title: 'TOTAL ENERGI / HARI',
+                  value: dailyEnergy.toStringAsFixed(1),
+                  unit: 'kWh',
+                  iconColor: Colors.amber[700],
+                ),
+                const SizedBox(height: 12),
+                buildInfoCard(
+                  icon: Icons.watch_later_outlined,
+                  title: 'TOTAL ENERGI',
+                  value: totalEnergy.toStringAsFixed(1),
+                  unit: 'kWh',
+                  iconColor: Colors.blue[700],
+                ),
+                const SizedBox(height: 12),
+                buildInfoCard(
+                  icon: Icons.cloud_outlined,
+                  title: 'TOTAL CO₂',
+                  value: totalCO2.toStringAsFixed(1),
+                  unit: 'kg',
+                  iconColor: Colors.green[700],
+                ),
+                const SizedBox(height: 12),
+                buildInfoCard(
+                  icon: Icons.attach_money,
+                  title: 'TOTAL BIAYA',
+                  value: NumberFormat.currency(
+                    locale: 'id',
+                    symbol: 'Rp',
+                    decimalDigits: 0,
+                  ).format(totalCost),
+                  unit: '',
+                  iconColor: Colors.purple[700],
+                ),
+              ],
+            ),
           ),
         ),
       ),

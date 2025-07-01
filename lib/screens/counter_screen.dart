@@ -608,7 +608,7 @@ class _CounterScreenState extends State<CounterScreen> {
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: color.withOpacity(0.1), // Warna latar yang lembut
+      color: Colors.grey.shade300, // Warna latar yang lembut
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -877,101 +877,114 @@ class _CounterScreenState extends State<CounterScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Kontrol Otomatis'),
+        // Menambahkan style agar sama dengan halaman lain
+        backgroundColor: Colors.indigo.shade400,
+        foregroundColor: Colors.grey.shade50,
+        elevation: 0,
         actions: [buildConnectionStatusForAppBar()],
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            buildModeIndicator(currentMode),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // --- PERUBAHAN DIMULAI DI SINI ---
-                    Row(
-                      // 1. Ubah Column menjadi Row
-                      mainAxisAlignment:
-                          MainAxisAlignment
-                              .spaceBetween, // 2. Agar item terpisah ke ujung
-                      crossAxisAlignment:
-                          CrossAxisAlignment
-                              .end, // 3. Agar baseline teks sejajar
-                      children: [
-                        // Widget untuk tanggal tetap sama
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${getIndonesianDay(now.weekday)}, ${now.day} ${getIndonesianMonth(now.month)} ${now.year}',
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
+      // Menambahkan Container dengan LinearGradient sebagai background
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.indigo.shade400, Colors.grey.shade50],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              buildModeIndicator(currentMode),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${getIndonesianDay(now.weekday)}, ${now.day} ${getIndonesianMonth(now.month)} ${now.year}',
+                                style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white, // Agar lebih kontras
+                                ),
                               ),
+                            ],
+                          ),
+                          Text(
+                            DateFormat('HH:mm:ss').format(now),
+                            style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white, // Agar lebih kontras
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Center(
+                        child: SegmentedButton<Floor>(
+                          style: SegmentedButton.styleFrom(
+                            backgroundColor: Colors.white.withOpacity(0.9),
+                            foregroundColor: Colors.indigo,
+                            selectedForegroundColor: Colors.white,
+                            selectedBackgroundColor: Colors.indigo,
+                          ),
+                          segments: const <ButtonSegment<Floor>>[
+                            ButtonSegment<Floor>(
+                              value: Floor.lantai1,
+                              label: Text('Lantai 1'),
+                              icon: Icon(Icons.looks_one),
+                            ),
+                            ButtonSegment<Floor>(
+                              value: Floor.lantai2,
+                              label: Text('Lantai 2'),
+                              icon: Icon(Icons.looks_two),
+                            ),
+                          ],
+                          selected: _selectedFloor,
+                          onSelectionChanged: (Set<Floor> newSelection) {
+                            setState(() {
+                              _selectedFloor = newSelection;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      buildPeopleCounter(),
+                      const SizedBox(height: 20),
+                      buildDeviceStatus(),
+                      const SizedBox(height: 20),
+                      IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(flex: 2, child: buildSystemStatusCard()),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              flex: 1,
+                              child: buildManualControlButton(),
                             ),
                           ],
                         ),
-                        // Widget untuk jam sekarang berdiri sendiri di dalam Row
-                        Text(
-                          DateFormat('HH:mm:ss').format(now),
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // --- AKHIR PERUBAHAN ---
-                    const SizedBox(height: 20),
-                    Center(
-                      child: SegmentedButton<Floor>(
-                        segments: const <ButtonSegment<Floor>>[
-                          ButtonSegment<Floor>(
-                            value: Floor.lantai1,
-                            label: Text('Lantai 1'),
-                            icon: Icon(Icons.looks_one),
-                          ),
-                          ButtonSegment<Floor>(
-                            value: Floor.lantai2,
-                            label: Text('Lantai 2'),
-                            icon: Icon(Icons.looks_two),
-                          ),
-                        ],
-                        selected: _selectedFloor,
-                        onSelectionChanged: (Set<Floor> newSelection) {
-                          setState(() {
-                            _selectedFloor = newSelection;
-                          });
-                        },
                       ),
-                    ),
-
-                    const SizedBox(height: 20),
-                    buildPeopleCounter(),
-                    const SizedBox(height: 20),
-                    buildDeviceStatus(),
-                    const SizedBox(height: 20),
-                    IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(flex: 2, child: buildSystemStatusCard()),
-                          const SizedBox(width: 16),
-                          Expanded(flex: 1, child: buildManualControlButton()),
-                        ],
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        // ... (Kode floating action button tetap sama) ...
         onPressed: isLoading ? null : fetchDataFromAntares,
         tooltip: 'Refresh',
         child:
@@ -979,7 +992,10 @@ class _CounterScreenState extends State<CounterScreen> {
                 ? const SizedBox(
                   width: 20,
                   height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
                 : const Icon(Icons.refresh),
       ),

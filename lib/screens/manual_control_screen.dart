@@ -78,19 +78,15 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
   String? _lastRequestId;
   Timer? _changeDebounceTimer;
 
-  Map<String, int> _pendingConfirmations = {};
-  Timer? _confirmationTimeoutTimer;
-
-  // Enhanced feedback states
+  Map<String, bool> _deviceStatusConfirmed = {};
+  Map<String, String> _deviceFeedbackMessages = {};
   String _feedbackMessage = '';
   Color _feedbackColor = Colors.blue;
   bool _showProgressIndicator = false;
-  int _totalExpectedConfirmations = 0;
-  int _receivedConfirmations = 0;
 
   final logger = Logger('ManualControlScreen');
-  // static const Duration _debounceDelay = Duration(seconds: 2);
   static const Duration _confirmationTimeoutDuration = Duration(seconds: 15);
+  Timer? _confirmationTimeoutTimer;
 
   // --- SharedPreferences Keys ---
   static const String _keyHasManualSettings = 'has_manual_settings';
@@ -220,6 +216,12 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
           _hasUnsavedChanges = true;
         });
       }
+    } else {
+      if (mounted) {
+        setState(() {
+          _hasUnsavedChanges = false;
+        });
+      }
     }
   }
 
@@ -238,10 +240,21 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
     }
   }
 
+  void _updateDeviceFeedback(String deviceKey, String message, bool confirmed) {
+    if (mounted && !_isDisposed) {
+      setState(() {
+        _deviceFeedbackMessages[deviceKey] = message;
+        _deviceStatusConfirmed[deviceKey] = confirmed;
+      });
+    }
+  }
+
   void _showFeedbackSnackBar(
     String message,
     Color backgroundColor, {
     Duration? duration,
+    bool showAction = false,
+    VoidCallback? actionCallback,
   }) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -263,14 +276,78 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
             ],
           ),
           backgroundColor: backgroundColor,
-          duration: duration ?? const Duration(seconds: 3),
+          duration: duration ?? const Duration(seconds: 4),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
           ),
+          action:
+              showAction
+                  ? SnackBarAction(
+                    label: 'Detail',
+                    textColor: Colors.white,
+                    onPressed: actionCallback ?? () {},
+                  )
+                  : null,
         ),
       );
     }
+  }
+
+  void _showDetailedStatusDialog() {
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Status Detail Perangkat'),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ..._deviceFeedbackMessages.entries.map(
+                    (entry) => ListTile(
+                      leading: Icon(
+                        _deviceStatusConfirmed[entry.key] == true
+                            ? Icons.check_circle
+                            : Icons.pending,
+                        color:
+                            _deviceStatusConfirmed[entry.key] == true
+                                ? Colors.green
+                                : Colors.orange,
+                      ),
+                      title: Text(_getFriendlyDeviceName(entry.key)),
+                      subtitle: Text(entry.value),
+                      dense: true,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Tutup'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  String _getFriendlyDeviceName(String deviceKey) {
+    final Map<String, String> deviceNames = {
+      'system_active_l1': 'Sistem Lantai 1',
+      'fan_status_l1': 'Kipas Lantai 1',
+      'lamp_status_l1': 'Lampu Lantai 1',
+      'ac_status_l1': 'AC Lantai 1',
+      'dispenser_status_l1': 'Dispenser Lantai 1',
+      'system_active_l2': 'Sistem Lantai 2',
+      'fan_status_l2': 'Kipas Lantai 2',
+      'lamp_status_l2': 'Lampu Lantai 2',
+      'ac_status_l2': 'AC Lantai 2',
+      'dispenser_status_l2': 'Dispenser Lantai 2',
+    };
+    return deviceNames[deviceKey] ?? deviceKey;
   }
 
   Future<void> _saveSettingsToPreferences() async {
@@ -365,12 +442,11 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
     final connMessage = MqttConnectMessage()
         .withClientIdentifier(_clientId)
         .startClean()
-        // .authenticateAs('fe5c7a15d8c13220', 'bfd764392a99a094')
         .withWillQos(MqttQos.atLeastOnce);
     client!.connectionMessage = connMessage;
     try {
       logger.info('MQTT: Attempting connection to $_mqttBroker...');
-      await client!.connect();
+      await client!.connect(); // Antares needs username/password
     } catch (e) {
       logger.severe('MQTT: Connection exception: $e');
       _updateFeedback('Gagal terhubung ke server', Colors.red);
@@ -456,201 +532,150 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
       logger.info('MQTT: Subscribed to topic: $topic');
   void _pong() => logger.fine('MQTT: Ping response received (pong)');
 
-  void _processDeviceData(String payload) {
-    // Jangan proses jika kita tidak sedang menunggu konfirmasi apapun
-    if (_pendingConfirmations.isEmpty) {
+  void _processDeviceData(String payload) async {
+    if (!_isApplyingChanges) {
+      logger.info("Ignoring incoming data as we are not applying changes.");
       return;
     }
 
-    logger.info("--- Menerima Data untuk Konfirmasi ---");
+    logger.info("--- Processing Confirmation Message from Device ---");
     logger.fine("Raw Payload: $payload");
 
     try {
       final notification = jsonDecode(payload);
       final cin = notification['m2m:sgn']?['nev']?['rep']?['m2m:cin'];
-
       if (cin == null) {
-        logger.warning(
-          "Struktur payload tidak sesuai, 'm2m:cin' tidak ditemukan.",
-        );
+        logger.warning("Invalid payload structure, 'm2m:cin' not found.");
         return;
       }
 
       final String? contentString = cin['con'];
       if (contentString == null || contentString.isEmpty) {
-        logger.warning(
-          "Payload 'cin' tidak memiliki content ('con') atau kosong.",
-        );
+        logger.warning("Payload 'cin' has no content ('con').");
         return;
       }
 
       final Map<String, dynamic> deviceState = jsonDecode(contentString);
-      logger.info("Data Perangkat yang Diterima: $deviceState");
+      logger.info("Received Device Status Data: $deviceState");
 
-      // Update progress feedback
-      _updateFeedback(
-        'Menerima konfirmasi... ($_receivedConfirmations/$_totalExpectedConfirmations)',
-        Colors.blue,
-        showProgress: true,
-      );
+      if (deviceState['source'] != 'device') {
+        logger.info(
+          "Message received, but not from 'device'. Ignoring as confirmation.",
+        );
+        return;
+      }
 
-      List<String> confirmedKeys = [];
-      _pendingConfirmations.forEach((key, expectedValue) {
-        if (deviceState.containsKey(key)) {
-          var receivedValue = deviceState[key];
+      logger.info("VALID CONFIRMATION RECEIVED. Processing final status.");
+      _confirmationTimeoutTimer?.cancel();
 
-          bool isMatch = _compareValues(expectedValue, receivedValue, key);
+      _deviceFeedbackMessages.clear();
+      _deviceStatusConfirmed.clear();
 
-          if (isMatch) {
-            logger.info(
-              'SUKSES: Konfirmasi diterima untuk $key -> $receivedValue',
-            );
-            confirmedKeys.add(key);
-            _receivedConfirmations++;
+      final Map<String, dynamic> expectedValues = {
+        'system_active_l1': systemActiveL1 ? 1 : 0,
+        'fan_status_l1': fanStatusL1 ? 1 : 0,
+        'lamp_status_l1': lampStatusL1 ? 1 : 0,
+        'ac_status_l1': acStatusL1 ? 1 : 0,
+        'dispenser_status_l1': dispenserStatusL1 ? 1 : 0,
+        'system_active_l2': systemActiveL2 ? 1 : 0,
+        'fan_status_l2': fanStatusL2 ? 1 : 0,
+        'lamp_status_l2': lampStatusL2 ? 1 : 0,
+        'ac_status_l2': acStatusL2 ? 1 : 0,
+        'dispenser_status_l2': dispenserStatusL2 ? 1 : 0,
+      };
 
-            // Update progress feedback
-            _updateFeedback(
-              'Konfirmasi diterima: ${_getFriendlyName(key)} ($_receivedConfirmations/$_totalExpectedConfirmations)',
-              Colors.blue,
-              showProgress: true,
-            );
+      List<String> successDevices = [];
+      List<String> failedDevices = [];
 
-            _showFeedbackSnackBar(
-              'Berhasil: ${_getFriendlyName(key)}',
-              Colors.green,
-              duration: const Duration(seconds: 1),
-            );
-          } else {
-            logger.warning(
-              'GAGAL: Konfirmasi tidak cocok untuk $key. Diharapkan: $expectedValue, Diterima: $receivedValue',
-            );
-          }
+      expectedValues.forEach((deviceKey, expectedValue) {
+        final actualValue = deviceState[deviceKey] ?? 0;
+        final deviceName = _getFriendlyDeviceName(deviceKey);
+        final isOn = actualValue == 1;
+        final expectedOn = expectedValue == 1;
+
+        if (actualValue == expectedValue) {
+          successDevices.add(deviceName);
+          _updateDeviceFeedback(
+            deviceKey,
+            '${isOn ? 'Berhasil dinyalakan' : 'Berhasil dimatikan'}',
+            true,
+          );
+        } else {
+          failedDevices.add(deviceName);
+          _updateDeviceFeedback(
+            deviceKey,
+            'Gagal ${expectedOn ? 'menyalakan' : 'mematikan'} (status: ${isOn ? 'hidup' : 'mati'})',
+            false,
+          );
         }
       });
 
-      // Hapus semua kunci yang sudah terkonfirmasi
-      for (var key in confirmedKeys) {
-        _pendingConfirmations.remove(key);
-      }
+      setState(() {
+        systemActiveL1 = (deviceState['system_active_l1'] ?? 0) == 1;
+        fanStatusL1 = (deviceState['fan_status_l1'] ?? 0) == 1;
+        lampStatusL1 = (deviceState['lamp_status_l1'] ?? 0) == 1;
+        acStatusL1 = (deviceState['ac_status_l1'] ?? 0) == 1;
+        dispenserStatusL1 = (deviceState['dispenser_status_l1'] ?? 0) == 1;
 
-      // Jika semua konfirmasi sudah diterima
-      if (_pendingConfirmations.isEmpty) {
-        logger.info('Semua perubahan berhasil dikonfirmasi oleh perangkat.');
-        _confirmationTimeoutTimer?.cancel();
+        systemActiveL2 = (deviceState['system_active_l2'] ?? 0) == 1;
+        fanStatusL2 = (deviceState['fan_status_l2'] ?? 0) == 1;
+        lampStatusL2 = (deviceState['lamp_status_l2'] ?? 0) == 1;
+        acStatusL2 = (deviceState['ac_status_l2'] ?? 0) == 1;
+        dispenserStatusL2 = (deviceState['dispenser_status_l2'] ?? 0) == 1;
 
-        if (mounted && !_isDisposed) {
-          setState(() {
-            _isApplyingChanges = false;
-          });
-          _updateLastKnownState();
-          _saveSettingsToPreferences();
+        _isApplyingChanges = false;
+      });
 
-          _updateFeedback('Semua perubahan berhasil diterapkan!', Colors.green);
-          _showFeedbackSnackBar(
-            'Semua perubahan berhasil diterapkan! ($_receivedConfirmations/$_totalExpectedConfirmations)',
-            Colors.green,
-            duration: const Duration(seconds: 4),
-          );
-        }
+      _updateLastKnownState();
+      await _saveSettingsToPreferences();
 
-        // Reset counters
-        _receivedConfirmations = 0;
-        _totalExpectedConfirmations = 0;
+      if (failedDevices.isEmpty) {
+        _updateFeedback('Semua perubahan berhasil diterapkan!', Colors.green);
+        _showFeedbackSnackBar(
+          'Berhasil memperbarui ${successDevices.length} perangkat!',
+          Colors.green,
+          duration: const Duration(seconds: 4),
+          showAction: true,
+          actionCallback: _showDetailedStatusDialog,
+        );
       } else {
-        logger.warning(
-          "Masih menunggu konfirmasi untuk: ${_pendingConfirmations.keys}",
+        _updateFeedback(
+          '${successDevices.length} berhasil, ${failedDevices.length} gagal',
+          Colors.orange,
+        );
+        _showFeedbackSnackBar(
+          'Sebagian berhasil: ${successDevices.length} berhasil, ${failedDevices.length} gagal',
+          Colors.orange,
+          duration: const Duration(seconds: 5),
+          showAction: true,
+          actionCallback: _showDetailedStatusDialog,
         );
       }
     } catch (e, s) {
-      logger.severe('Gagal memproses data perangkat: $e\n$s');
-      _updateFeedback('Error memproses data perangkat', Colors.red);
+      logger.severe('Failed to process device data: $e\n$s');
+      _updateFeedback('Error memproses data konfirmasi', Colors.red);
+      setState(() {
+        _isApplyingChanges = false;
+      });
     }
-  }
-
-  bool _compareValues(
-    dynamic expectedValue,
-    dynamic receivedValue,
-    String key,
-  ) {
-    if (expectedValue == receivedValue) {
-      return true;
-    }
-
-    dynamic normalizedExpected = expectedValue;
-    dynamic normalizedReceived = receivedValue;
-
-    if (expectedValue is bool) {
-      normalizedExpected = expectedValue ? 1 : 0;
-    }
-    if (receivedValue is bool) {
-      normalizedReceived = receivedValue ? 1 : 0;
-    }
-
-    if (expectedValue is String && _isNumeric(expectedValue)) {
-      normalizedExpected = int.tryParse(expectedValue) ?? expectedValue;
-    }
-    if (receivedValue is String && _isNumeric(receivedValue)) {
-      normalizedReceived = int.tryParse(receivedValue) ?? receivedValue;
-    }
-
-    if (normalizedExpected == normalizedReceived) {
-      return true;
-    }
-
-    if (normalizedExpected.toString() == normalizedReceived.toString()) {
-      return true;
-    }
-
-    return false;
-  }
-
-  bool _isNumeric(String str) {
-    return int.tryParse(str) != null || double.tryParse(str) != null;
-  }
-
-  String _getFriendlyName(String key) {
-    final Map<String, String> friendlyNames = {
-      'system_active_l1': 'Sistem Lantai 1',
-      'fan_status_l1': 'Kipas Lantai 1',
-      'lamp_status_l1': 'Lampu Lantai 1',
-      'ac_status_l1': 'AC Lantai 1',
-      'dispenser_status_l1': 'Dispenser Lantai 1',
-      'system_active_l2': 'Sistem Lantai 2',
-      'fan_status_l2': 'Kipas Lantai 2',
-      'lamp_status_l2': 'Lampu Lantai 2',
-      'ac_status_l2': 'AC Lantai 2',
-      'dispenser_status_l2': 'Dispenser Lantai 2',
-    };
-    return friendlyNames[key] ?? key.replaceAll('_', ' ');
   }
 
   void _startConfirmationTimeout() {
     _confirmationTimeoutTimer?.cancel();
     _confirmationTimeoutTimer = Timer(_confirmationTimeoutDuration, () {
-      if (_pendingConfirmations.isNotEmpty && mounted) {
-        logger.warning(
-          'Confirmation timeout! Did not receive updates for: ${_pendingConfirmations.keys}',
-        );
-        final missingItems = _pendingConfirmations.keys
-            .map(_getFriendlyName)
-            .join(', ');
+      if (_isApplyingChanges && mounted) {
+        logger.warning('Confirmation timeout! No response from device.');
 
-        _updateFeedback(
-          'Timeout: Tidak ada respons dari perangkat',
-          Colors.red,
-        );
+        _updateFeedback('Timeout: Perangkat tidak merespons', Colors.red);
         _showFeedbackSnackBar(
-          'Timeout: $missingItems tidak merespons dalam waktu yang ditentukan',
-          Colors.orange,
-          duration: const Duration(seconds: 5),
+          'Timeout: Tidak ada konfirmasi dari perangkat dalam 15 detik. Periksa koneksi perangkat.',
+          Colors.red,
+          duration: const Duration(seconds: 6),
         );
 
         if (mounted && !_isDisposed) {
           setState(() {
             _isApplyingChanges = false;
-            _pendingConfirmations.clear();
-            _receivedConfirmations = 0;
-            _totalExpectedConfirmations = 0;
           });
         }
       }
@@ -658,11 +683,9 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
   }
 
   // --- Core Logic for Sending Data ---
-
   Future<void> updateDeviceStatus() async {
     if (_isApplyingChanges || _isSwitchingToAuto) return;
     if (!_hasStateChanged()) {
-      logger.info('No state changes detected, skipping update');
       _showFeedbackSnackBar(
         'Tidak ada perubahan untuk diterapkan',
         Colors.blue,
@@ -679,41 +702,24 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
     }
 
     _changeDebounceTimer?.cancel();
-    _pendingConfirmations.clear();
-    _receivedConfirmations = 0;
+    _deviceFeedbackMessages.clear();
+    _deviceStatusConfirmed.clear();
 
-    // Populate a list of what we expect to be confirmed
-    if (systemActiveL1 != _lastSystemActiveL1)
-      _pendingConfirmations['system_active_l1'] = systemActiveL1 ? 1 : 0;
-    if (fanStatusL1 != _lastFanStatusL1)
-      _pendingConfirmations['fan_status_l1'] = fanStatusL1 ? 1 : 0;
-    if (lampStatusL1 != _lastLampStatusL1)
-      _pendingConfirmations['lamp_status_l1'] = lampStatusL1 ? 1 : 0;
-    if (acStatusL1 != _lastAcStatusL1)
-      _pendingConfirmations['ac_status_l1'] = acStatusL1 ? 1 : 0;
-    if (dispenserStatusL1 != _lastDispenserStatusL1)
-      _pendingConfirmations['dispenser_status_l1'] = dispenserStatusL1 ? 1 : 0;
+    // Hitung jumlah perubahan untuk feedback yang lebih baik
+    int changeCount = 0;
+    if (systemActiveL1 != _lastSystemActiveL1) changeCount++;
+    if (fanStatusL1 != _lastFanStatusL1) changeCount++;
+    if (lampStatusL1 != _lastLampStatusL1) changeCount++;
+    if (acStatusL1 != _lastAcStatusL1) changeCount++;
+    if (dispenserStatusL1 != _lastDispenserStatusL1) changeCount++;
+    if (systemActiveL2 != _lastSystemActiveL2) changeCount++;
+    if (fanStatusL2 != _lastFanStatusL2) changeCount++;
+    if (lampStatusL2 != _lastLampStatusL2) changeCount++;
+    if (acStatusL2 != _lastAcStatusL2) changeCount++;
+    if (dispenserStatusL2 != _lastDispenserStatusL2) changeCount++;
 
-    if (systemActiveL2 != _lastSystemActiveL2)
-      _pendingConfirmations['system_active_l2'] = systemActiveL2 ? 1 : 0;
-    if (fanStatusL2 != _lastFanStatusL2)
-      _pendingConfirmations['fan_status_l2'] = fanStatusL2 ? 1 : 0;
-    if (lampStatusL2 != _lastLampStatusL2)
-      _pendingConfirmations['lamp_status_l2'] = lampStatusL2 ? 1 : 0;
-    if (acStatusL2 != _lastAcStatusL2)
-      _pendingConfirmations['ac_status_l2'] = acStatusL2 ? 1 : 0;
-    if (dispenserStatusL2 != _lastDispenserStatusL2)
-      _pendingConfirmations['dispenser_status_l2'] = dispenserStatusL2 ? 1 : 0;
-
-    if (_pendingConfirmations.isEmpty) {
-      logger.info("No actionable changes to send.");
-      return;
-    }
-
-    _totalExpectedConfirmations = _pendingConfirmations.length;
-    logger.info("Pending confirmations: $_pendingConfirmations");
-
-    if (mounted && !_isDisposed) {
+    // Set state untuk memulai proses pengiriman
+    if (mounted) {
       setState(() {
         _isApplyingChanges = true;
         _lastRequestId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -721,53 +727,59 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
     }
 
     _updateFeedback(
-      'Mengirim perubahan... (0/$_totalExpectedConfirmations)',
+      'Menerapkan $changeCount perubahan...',
       Colors.blue,
       showProgress: true,
     );
+    _showFeedbackSnackBar('Mengirim perubahan ke perangkat...', Colors.blue);
 
-    _showFeedbackSnackBar(
-      'Mengirim $_totalExpectedConfirmations perubahan ke perangkat...',
-      Colors.blue,
-    );
+    // Mulai timer timeout untuk menunggu konfirmasi dari perangkat
+    _startConfirmationTimeout();
 
     try {
-      logger.info('Sending multi-floor device status update');
+      // 1. Siapkan payload konten dengan status semua perangkat
       final contentPayload = {
         "source": "flutter_app",
-        "control_command": "1",
+        "control_command": "1", // 1 untuk mode kontrol manual
         "manual_control": 1,
-        "resetOccupancy": 0,
+        // Lantai 1 (konversi boolean ke integer 0 atau 1)
         "system_active_l1": systemActiveL1 ? 1 : 0,
         "fan_status_l1": fanStatusL1 ? 1 : 0,
         "lamp_status_l1": lampStatusL1 ? 1 : 0,
         "ac_status_l1": acStatusL1 ? 1 : 0,
         "dispenser_status_l1": dispenserStatusL1 ? 1 : 0,
+        // Lantai 2
         "system_active_l2": systemActiveL2 ? 1 : 0,
         "fan_status_l2": fanStatusL2 ? 1 : 0,
         "lamp_status_l2": lampStatusL2 ? 1 : 0,
         "ac_status_l2": acStatusL2 ? 1 : 0,
         "dispenser_status_l2": dispenserStatusL2 ? 1 : 0,
       };
+
+      // 2. Bungkus payload konten ke dalam format request Antares (m2m:rqp)
       final mqttPayload = {
         "m2m:rqp": {
           "fr": _accessKey,
-          "to": "/antares-cse/antares-id/$_projectName/$_deviceName/la",
-          "op": 1,
+          "to":
+              "/antares-cse/antares-id/$_projectName/$_deviceName", // Kirim ke device
+          "op": 1, // Create
           "rqi": _lastRequestId,
           "pc": {
-            "m2m:cin": {"cnf": "message", "con": jsonEncode(contentPayload)},
+            "m2m:cin": {
+              "cnf": "text/plain:0",
+              "con": jsonEncode(contentPayload),
+            },
           },
-          "ty": 4,
+          "ty": 4, // ContentInstance
         },
       };
 
+      // 3. Kirim payload melalui MQTT
       final builder = MqttClientPayloadBuilder();
       builder.addString(jsonEncode(mqttPayload));
 
-      logger.info('Publishing to topic: $_requestTopic');
-      logger.fine('MQTT Payload: ${jsonEncode(mqttPayload)}');
-      logger.info('Content Payload: ${jsonEncode(contentPayload)}');
+      logger.info('Publishing manual control update to topic: $_requestTopic');
+      logger.fine('Manual Control MQTT Payload: ${jsonEncode(mqttPayload)}');
 
       client?.publishMessage(
         _requestTopic,
@@ -775,39 +787,26 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
         builder.payload!,
       );
 
-      logger.info('Multi-floor device status update sent successfully');
-
-      // Start confirmation timeout
-      _startConfirmationTimeout();
-
-      _updateFeedback(
-        'Perubahan terkirim, menunggu konfirmasi... (0/$_totalExpectedConfirmations)',
-        Colors.blue,
-        showProgress: true,
+      logger.info(
+        'Perintah kontrol manual terkirim. Menunggu konfirmasi perangkat...',
       );
     } catch (e, s) {
-      logger.severe('Failed to send multi-floor device status update: $e\n$s');
-
+      logger.severe('Gagal mengirim pembaruan status perangkat: $e\n$s');
+      _confirmationTimeoutTimer?.cancel(); // Hentikan timer jika terjadi error
       if (mounted && !_isDisposed) {
         setState(() {
           _isApplyingChanges = false;
-          _pendingConfirmations.clear();
-          _receivedConfirmations = 0;
-          _totalExpectedConfirmations = 0;
         });
       }
-
-      _updateFeedback('Gagal mengirim perubahan', Colors.red);
+      _updateFeedback('Gagal mengirim perintah', Colors.red);
       _showFeedbackSnackBar(
         'Gagal mengirim perubahan: ${e.toString()}',
         Colors.red,
-        duration: const Duration(seconds: 5),
       );
     }
   }
 
   // --- Switch to Auto Mode Logic ---
-
   Future<void> switchToAutoMode() async {
     if (_isSwitchingToAuto || _isApplyingChanges) return;
 
@@ -888,11 +887,14 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
       final mqttPayload = {
         "m2m:rqp": {
           "fr": _accessKey,
-          "to": "/antares-cse/antares-id/$_projectName/$_deviceName/la",
+          "to": "/antares-cse/antares-id/$_projectName/$_deviceName",
           "op": 1,
           "rqi": _lastRequestId,
           "pc": {
-            "m2m:cin": {"cnf": "message", "con": jsonEncode(contentPayload)},
+            "m2m:cin": {
+              "cnf": "text/plain:0",
+              "con": jsonEncode(contentPayload),
+            },
           },
           "ty": 4,
         },
@@ -930,7 +932,6 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
           duration: const Duration(seconds: 3),
         );
 
-        // Navigate back to previous screen after a short delay
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted) {
             Navigator.of(
@@ -955,6 +956,103 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
         duration: const Duration(seconds: 5),
       );
     }
+  }
+
+  // --- [BARU] --- Fungsi untuk mengirim perintah reset occupancy
+  Future<void> _sendResetOccupancyCommand() async {
+    if (!_isMqttConnected) {
+      _showFeedbackSnackBar(
+        'Koneksi Gagal. Tidak dapat mengirim perintah reset.',
+        Colors.red,
+      );
+      return;
+    }
+
+    _updateFeedback(
+      'Mengirim perintah reset occupancy...',
+      Colors.blue,
+      showProgress: true,
+    );
+
+    try {
+      // Sesuai dengan kode ESP, payload-nya adalah {"resetOccupancy": 1}
+      final contentPayload = {
+        "source": "flutter_app",
+        "resetOccupancy": 1, // Kunci ini harus dikenali oleh firmware ESP Anda
+      };
+      final requestId = 'reset_occ_${DateTime.now().millisecondsSinceEpoch}';
+
+      final mqttPayload = {
+        "m2m:rqp": {
+          "fr": _accessKey,
+          "to": "/antares-cse/antares-id/$_projectName/$_deviceName",
+          "op": 1,
+          "rqi": requestId,
+          "pc": {
+            "m2m:cin": {
+              "cnf": "text/plain:0",
+              "con": jsonEncode(contentPayload),
+            },
+          },
+          "ty": 4,
+        },
+      };
+
+      final builder = MqttClientPayloadBuilder();
+      builder.addString(jsonEncode(mqttPayload));
+
+      client?.publishMessage(
+        _requestTopic,
+        MqttQos.atLeastOnce,
+        builder.payload!,
+      );
+
+      logger.info('Perintah reset occupancy berhasil dikirim.');
+      _updateFeedback('', Colors.transparent);
+      _showFeedbackSnackBar(
+        'Perintah reset occupancy berhasil dikirim ke perangkat.',
+        Colors.green,
+      );
+    } catch (e, s) {
+      logger.severe('Gagal mengirim perintah reset occupancy: $e\n$s');
+      _updateFeedback('Gagal mengirim perintah reset', Colors.red);
+      _showFeedbackSnackBar(
+        'Gagal mengirim perintah reset: ${e.toString()}',
+        Colors.red,
+        duration: const Duration(seconds: 4),
+      );
+    }
+  }
+
+  // --- [BARU] --- Dialog konfirmasi untuk reset occupancy
+  void _showResetOccupancyConfirmationDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Konfirmasi Reset Occupancy'),
+          content: const Text(
+            'Apakah Anda yakin ingin mereset data jumlah orang (occupancy) di kedua lantai ke nol? Tindakan ini tidak dapat dibatalkan.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Batal'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: Colors.orange),
+              child: const Text('Ya, Reset'),
+              onPressed: () {
+                Navigator.of(context).pop();
+                _sendResetOccupancyCommand(); // Panggil fungsi yang baru dibuat
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _sendResetEspCommand() async {
@@ -982,11 +1080,14 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
       final mqttPayload = {
         "m2m:rqp": {
           "fr": _accessKey,
-          "to": "/antares-cse/antares-id/$_projectName/$_deviceName/la",
+          "to": "/antares-cse/antares-id/$_projectName/$_deviceName",
           "op": 1,
           "rqi": requestId,
           "pc": {
-            "m2m:cin": {"cnf": "message", "con": jsonEncode(contentPayload)},
+            "m2m:cin": {
+              "cnf": "text/plain:0",
+              "con": jsonEncode(contentPayload),
+            },
           },
           "ty": 4,
         },
@@ -1039,7 +1140,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
               child: const Text('Ya, Restart'),
               onPressed: () {
                 Navigator.of(context).pop();
-                _sendResetEspCommand(); // Panggil fungsi pengiriman
+                _sendResetEspCommand();
               },
             ),
           ],
@@ -1049,6 +1150,100 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
   }
 
   // --- UI Helper Methods ---
+  void _showUsageInstructionsDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.indigo),
+              SizedBox(width: 10),
+              Text('Petunjuk Penggunaan'),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: ListBody(
+              children: <Widget>[
+                _buildInstructionStep(
+                  '1',
+                  'Ubah Status Perangkat',
+                  'Gunakan saklar (toggle) untuk mengaktifkan atau menonaktifkan setiap perangkat seperti Kipas, Lampu, AC, dan lainnya.',
+                ),
+                _buildInstructionStep(
+                  '2',
+                  'Terapkan Perubahan',
+                  'Setelah selesai mengatur, tekan tombol "Terapkan Perubahan". Tombol ini akan mengirimkan semua pengaturan Anda ke perangkat fisik (ESP).',
+                ),
+                _buildInstructionStep(
+                  '3',
+                  'Simpan Pengaturan (Opsional)',
+                  'Tombol "Simpan Pengaturan" akan menyimpan status saklar saat ini di memori HP. Jadi, saat Anda membuka halaman ini lagi, pengaturannya akan sama seperti yang terakhir disimpan.',
+                ),
+                _buildInstructionStep(
+                  '4',
+                  'Kembali ke Mode Otomatis',
+                  'Gunakan tombol ini untuk mengembalikan sistem ke kontrol otomatis. Semua pengaturan manual akan dinonaktifkan.',
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Mengerti'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildInstructionStep(
+    String stepNumber,
+    String title,
+    String description,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: Colors.indigo,
+            child: Text(
+              stepNumber,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  description,
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _buildConnectionStatus() {
     return Container(
@@ -1066,7 +1261,6 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
         children: [
           Icon(
             Icons.circle,
-            // _isMqttConnected ? Icons.cloud_done : Icons.cloud_off,
             color: _isMqttConnected ? Colors.green : Colors.red,
             size: 12,
           ),
@@ -1109,117 +1303,136 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Kontrol Manual'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            // Tanyakan konfirmasi jika ada perubahan yang belum disimpan
-            if (_hasUnsavedChanges) {
-              _showExitConfirmationDialog();
-            } else {
-              Navigator.of(context).pop();
-            }
-          },
+    return WillPopScope(
+      onWillPop: () async {
+        if (_hasUnsavedChanges) {
+          _showExitConfirmationDialog();
+          return false; // Mencegah pop otomatis
+        }
+        return true; // Izinkan pop
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Kontrol Manual'),
+          backgroundColor: Colors.indigo.shade400,
+          foregroundColor: Colors.grey.shade50,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              if (_hasUnsavedChanges) {
+                _showExitConfirmationDialog();
+              } else {
+                Navigator.of(context).pop();
+              }
+            },
+          ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.help_outline),
+              tooltip: 'Petunjuk Penggunaan',
+              onPressed: _showUsageInstructionsDialog,
+            ),
+          ],
         ),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Connection Status & Feedback
-              _buildConnectionStatus(),
-
-              // Floor 1 Controls
-              _buildFloorControlSection(
-                'Lantai 1',
-                systemActiveL1,
-                fanStatusL1,
-                lampStatusL1,
-                acStatusL1,
-                dispenserStatusL1,
-                (value) {
-                  setState(() {
-                    systemActiveL1 = value;
-                    if (!value) {
-                      fanStatusL1 = false;
-                      lampStatusL1 = false;
-                      acStatusL1 = false;
-                      dispenserStatusL1 = false;
-                    }
-                  });
-                  _handleStateChange();
-                },
-                (value) => setState(() {
-                  fanStatusL1 = value;
-                  _handleStateChange();
-                }),
-                (value) => setState(() {
-                  lampStatusL1 = value;
-                  _handleStateChange();
-                }),
-                (value) => setState(() {
-                  acStatusL1 = value;
-                  _handleStateChange();
-                }),
-                (value) => setState(() {
-                  dispenserStatusL1 = value;
-                  _handleStateChange();
-                }),
+        body: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.indigo.shade400, Colors.grey.shade50],
+            ),
+          ),
+          child: SafeArea(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildConnectionStatus(),
+                  _buildFloorControlSection(
+                    'Lantai 1',
+                    systemActiveL1,
+                    fanStatusL1,
+                    lampStatusL1,
+                    acStatusL1,
+                    dispenserStatusL1,
+                    (value) {
+                      setState(() {
+                        systemActiveL1 = value;
+                        if (!value) {
+                          fanStatusL1 = false;
+                          lampStatusL1 = false;
+                          acStatusL1 = false;
+                          dispenserStatusL1 = false;
+                        }
+                      });
+                      _handleStateChange();
+                    },
+                    (value) => setState(() {
+                      fanStatusL1 = value;
+                      _handleStateChange();
+                    }),
+                    (value) => setState(() {
+                      lampStatusL1 = value;
+                      _handleStateChange();
+                    }),
+                    (value) => setState(() {
+                      acStatusL1 = value;
+                      _handleStateChange();
+                    }),
+                    (value) => setState(() {
+                      dispenserStatusL1 = value;
+                      _handleStateChange();
+                    }),
+                  ),
+                  _buildFloorControlSection(
+                    'Lantai 2',
+                    systemActiveL2,
+                    fanStatusL2,
+                    lampStatusL2,
+                    acStatusL2,
+                    dispenserStatusL2,
+                    (value) {
+                      setState(() {
+                        systemActiveL2 = value;
+                        if (!value) {
+                          fanStatusL2 = false;
+                          lampStatusL2 = false;
+                          acStatusL2 = false;
+                          dispenserStatusL2 = false;
+                        }
+                      });
+                      _handleStateChange();
+                    },
+                    (value) => setState(() {
+                      fanStatusL2 = value;
+                      _handleStateChange();
+                    }),
+                    (value) => setState(() {
+                      lampStatusL2 = value;
+                      _handleStateChange();
+                    }),
+                    (value) => setState(() {
+                      acStatusL2 = value;
+                      _handleStateChange();
+                    }),
+                    (value) => setState(() {
+                      dispenserStatusL2 = value;
+                      _handleStateChange();
+                    }),
+                  ),
+                  _buildActionButtons(),
+                  const SizedBox(height: 20),
+                ],
               ),
-
-              // Floor 2 Controls
-              _buildFloorControlSection(
-                'Lantai 2',
-                systemActiveL2,
-                fanStatusL2,
-                lampStatusL2,
-                acStatusL2,
-                dispenserStatusL2,
-                (value) {
-                  setState(() {
-                    systemActiveL2 = value;
-                    if (!value) {
-                      fanStatusL2 = false;
-                      lampStatusL2 = false;
-                      acStatusL2 = false;
-                      dispenserStatusL2 = false;
-                    }
-                  });
-                  _handleStateChange();
-                },
-                (value) => setState(() {
-                  fanStatusL2 = value;
-                  _handleStateChange();
-                }),
-                (value) => setState(() {
-                  lampStatusL2 = value;
-                  _handleStateChange();
-                }),
-                (value) => setState(() {
-                  acStatusL2 = value;
-                  _handleStateChange();
-                }),
-                (value) => setState(() {
-                  dispenserStatusL2 = value;
-                  _handleStateChange();
-                }),
-              ),
-
-              // Action Buttons
-              _buildActionButtons(),
-
-              const SizedBox(height: 20),
-            ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  // Widget untuk tombol Aksi (Terapkan dan Beralih ke Otomatis)
+  // --- [MODIFIKASI] --- Widget ini diubah untuk menampung dua tombol reset
   Widget _buildActionButtons() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
@@ -1230,7 +1443,6 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
             icon: const Icon(Icons.save),
             label: const Text('Simpan Pengaturan'),
             onPressed: _hasUnsavedChanges ? _saveSettingsToPreferences : null,
-
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.teal,
               foregroundColor: Colors.white,
@@ -1242,7 +1454,6 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
             ),
           ),
           const SizedBox(height: 12),
-
           ElevatedButton.icon(
             icon:
                 _isApplyingChanges
@@ -1254,7 +1465,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
                         color: Colors.white,
                       ),
                     )
-                    : const Icon(Icons.send), // Icon lebih sesuai
+                    : const Icon(Icons.send),
             label: const Text('Terapkan Perubahan'),
             onPressed:
                 _isApplyingChanges || !_hasStateChanged()
@@ -1285,29 +1496,44 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
               padding: const EdgeInsets.symmetric(vertical: 16),
             ),
           ),
-
-          // --- TAMBAHAN: Tombol Reset ESP ---
           const SizedBox(height: 24),
           const Divider(),
           const SizedBox(height: 8),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.restart_alt),
-            label: const Text('Restart Perangkat ESP'),
-            onPressed:
-                _showResetConfirmationDialog, // Panggil dialog konfirmasi
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.red,
-              side: const BorderSide(color: Colors.red),
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
+          // --- [MODIFIKASI] --- Menggunakan Row untuk dua tombol
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.replay_circle_filled_outlined),
+                  label: const Text('Reset Occupancy'),
+                  onPressed: _showResetOccupancyConfirmationDialog,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.orange.shade700,
+                    side: BorderSide(color: Colors.orange.shade700),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.restart_alt),
+                  label: const Text('Restart ESP'),
+                  onPressed: _showResetConfirmationDialog,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red,
+                    side: const BorderSide(color: Colors.red),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ],
           ),
-          // --- AKHIR TAMBAHAN ---
         ],
       ),
     );
   }
 
-  // Dialog konfirmasi saat keluar dengan perubahan yang belum disimpan
   Future<void> _showExitConfirmationDialog() async {
     final bool? shouldExit = await showDialog<bool>(
       context: context,
@@ -1315,7 +1541,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
           (context) => AlertDialog(
             title: const Text('Perubahan Belum Disimpan'),
             content: const Text(
-              'Anda memiliki perubahan yang belum diterapkan. Apakah Anda yakin ingin keluar?',
+              'Anda memiliki perubahan yang belum diterapkan atau disimpan. Apakah Anda yakin ingin keluar?',
             ),
             actions: <Widget>[
               TextButton(
@@ -1348,8 +1574,9 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
     Function(bool) onDispenserChanged,
   ) {
     return Card(
-      margin: const EdgeInsets.all(16),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1357,19 +1584,19 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
           children: [
             Text(
               floorTitle,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
-
-            // System Active Toggle
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color:
-                    systemActive ? Colors.green.shade50 : Colors.grey.shade50,
+                    systemActive ? Colors.green.shade50 : Colors.grey.shade200,
                 border: Border.all(
                   color: systemActive ? Colors.green : Colors.grey,
-                  width: 2,
+                  width: 1.5,
                 ),
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -1377,7 +1604,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
                 children: [
                   Icon(
                     systemActive ? Icons.power : Icons.power_off,
-                    color: systemActive ? Colors.green : Colors.grey,
+                    color: systemActive ? Colors.green : Colors.grey.shade700,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1387,8 +1614,8 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
                         fontWeight: FontWeight.bold,
                         color:
                             systemActive
-                                ? Colors.green.shade700
-                                : Colors.grey.shade700,
+                                ? Colors.green.shade800
+                                : Colors.grey.shade800,
                       ),
                     ),
                   ),
@@ -1400,39 +1627,39 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 16),
-
-            // Device Controls
             Opacity(
               opacity: systemActive ? 1.0 : 0.5,
-              child: Column(
-                children: [
-                  _buildDeviceControl(
-                    'Kipas',
-                    Icons.air,
-                    fanStatus,
-                    systemActive ? onFanChanged : null,
-                  ),
-                  _buildDeviceControl(
-                    'Lampu',
-                    Icons.lightbulb,
-                    lampStatus,
-                    systemActive ? onLampChanged : null,
-                  ),
-                  _buildDeviceControl(
-                    'AC',
-                    Icons.ac_unit,
-                    acStatus,
-                    systemActive ? onAcChanged : null,
-                  ),
-                  _buildDeviceControl(
-                    'Dispenser',
-                    Icons.local_drink,
-                    dispenserStatus,
-                    systemActive ? onDispenserChanged : null,
-                  ),
-                ],
+              child: AbsorbPointer(
+                absorbing: !systemActive,
+                child: Column(
+                  children: [
+                    _buildDeviceControl(
+                      'Kipas',
+                      Icons.air,
+                      fanStatus,
+                      onFanChanged,
+                    ),
+                    _buildDeviceControl(
+                      'Lampu',
+                      Icons.lightbulb_outline,
+                      lampStatus,
+                      onLampChanged,
+                    ),
+                    _buildDeviceControl(
+                      'AC',
+                      Icons.ac_unit,
+                      acStatus,
+                      onAcChanged,
+                    ),
+                    _buildDeviceControl(
+                      'Dispenser',
+                      Icons.local_drink,
+                      dispenserStatus,
+                      onDispenserChanged,
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -1449,7 +1676,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
   ) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: status ? Colors.blue.shade50 : Colors.grey.shade100,
         borderRadius: BorderRadius.circular(8),
@@ -1459,13 +1686,13 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
       ),
       child: Row(
         children: [
-          Icon(icon, color: status ? Colors.blue : Colors.grey),
+          Icon(icon, color: status ? Colors.blue : Colors.grey.shade600),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               deviceName,
               style: TextStyle(
-                color: status ? Colors.blue.shade700 : Colors.grey.shade600,
+                color: status ? Colors.blue.shade800 : Colors.grey.shade700,
                 fontWeight: FontWeight.w500,
               ),
             ),

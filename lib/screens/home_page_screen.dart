@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'monitoring_screen.dart';
 import 'predicting_screen.dart';
-import 'history_screen.dart';
 import 'counter_screen.dart';
 
 class HomePageScreen extends StatelessWidget {
@@ -20,84 +19,94 @@ class HomePageScreen extends StatelessWidget {
             colors: [Color(0xFF667eea), Color(0xFF764ba2)],
           ),
         ),
-        child: SingleChildScrollView(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              minHeight: MediaQuery.of(context).size.height,
-            ),
-            child: Column(
-              children: [
-                // Hero Section
-                Container(
-                  height: 250,
-                  width: double.infinity,
-                  child: const SafeArea(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text('⚡', style: TextStyle(fontSize: 48)),
-                        SizedBox(height: 16),
-                        Text(
-                          'Smart Meter',
-                          style: TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.w300,
-                            color: Colors.white,
-                          ),
-                        ),
-                        Text(
-                          'Intelligent Energy Management',
-                          style: TextStyle(fontSize: 16, color: Colors.white70),
-                        ),
-                      ],
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Hero Section - Reduced height
+              Container(
+                height: 200,
+                width: double.infinity,
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('⚡', style: TextStyle(fontSize: 48)),
+                    SizedBox(height: 16),
+                    Text(
+                      'Smart Meter',
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w300,
+                        color: Colors.white,
+                      ),
                     ),
-                  ),
+                    Text(
+                      'Intelligent Energy Management',
+                      style: TextStyle(fontSize: 16, color: Colors.white70),
+                    ),
+                  ],
                 ),
+              ),
 
-                // Menu Cards - Changed from SliverPadding to Padding
-                Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: GridView.count(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    childAspectRatio: 1.1,
+              // Spacer to push content to center
+              // const Spacer(),
+
+              // Menu Cards - Centered layout
+              Expanded(
+                flex: 3,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _buildMinimalCard(
-                        context,
-                        'Monitoring',
-                        Icons.monitor_heart_outlined,
-                        const Color(0xFF06B6D4), // cyan
-                        const MonitoringScreen(),
+                      // First row - 2 cards
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _buildMinimalCard(
+                              context,
+                              'Monitoring',
+                              Icons.monitor_heart_outlined,
+                              const Color(0xFF06B6D4),
+                              const MonitoringScreen(),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: _buildMinimalCard(
+                              context,
+                              'Prediction',
+                              Icons.auto_graph,
+                              const Color(0xFF10B981),
+                              const PredictingScreen(),
+                            ),
+                          ),
+                        ],
                       ),
-                      _buildMinimalCard(
-                        context,
-                        'Prediction',
-                        Icons.auto_graph,
-                        const Color(0xFF10B981), // emerald
-                        const PredictingScreen(),
-                      ),
-                      _buildMinimalCard(
-                        context,
-                        'Control',
-                        Icons.tune,
-                        const Color(0xFFF59E0B), // amber
-                        const CounterScreen(),
-                      ),
-                      _buildMinimalCard(
-                        context,
-                        'History',
-                        Icons.history,
-                        const Color(0xFFEF4444), // red
-                        const HistoryScreen(),
+                      const SizedBox(height: 16),
+                      // Second row - 1 card centered
+                      Row(
+                        children: [
+                          const Spacer(),
+                          Expanded(
+                            child: _buildMinimalCard(
+                              context,
+                              'Control',
+                              Icons.tune,
+                              const Color(0xFFF59E0B),
+                              const CounterScreen(),
+                            ),
+                          ),
+                          const Spacer(),
+                        ],
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
+              ),
+
+              // Bottom spacer
+              const Spacer(),
+            ],
           ),
         ),
       ),
@@ -108,7 +117,7 @@ class HomePageScreen extends StatelessWidget {
     BuildContext context,
     String title,
     IconData icon,
-    Color color, // Added color parameter
+    Color color,
     Widget screen,
   ) {
     return GestureDetector(
@@ -123,15 +132,18 @@ class HomePageScreen extends StatelessWidget {
           color: Colors.grey.shade50,
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: Colors.grey.shade200),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              size: 32,
-              color: color,
-            ), // Use white color for better contrast
+            Icon(icon, size: 32, color: color),
             const SizedBox(height: 8),
             Text(
               title,

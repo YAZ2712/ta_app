@@ -44,31 +44,31 @@ class ManualControlScreen extends StatefulWidget {
 class _ManualControlScreenState extends State<ManualControlScreen> {
   // --- State Variables for 2 Floors ---
   // Floor 1
-  late bool fanStatusL1,
-      lampStatusL1,
-      acStatusL1,
-      dispenserStatusL1,
-      systemActiveL1;
+  bool fanStatusL1 = false;
+  bool lampStatusL1 = false;
+  bool acStatusL1 = false;
+  bool dispenserStatusL1 = false;
+  bool systemActiveL1 = false;
   // Floor 2
-  late bool fanStatusL2,
-      lampStatusL2,
-      acStatusL2,
-      dispenserStatusL2,
-      systemActiveL2;
+  bool fanStatusL2 = false;
+  bool lampStatusL2 = false;
+  bool acStatusL2 = false;
+  bool dispenserStatusL2 = false;
+  bool systemActiveL2 = false;
 
   // --- State Tracking for Unsaved Changes ---
   // Floor 1
-  late bool _lastFanStatusL1,
-      _lastLampStatusL1,
-      _lastAcStatusL1,
-      _lastDispenserStatusL1,
-      _lastSystemActiveL1;
+  bool _lastFanStatusL1 = false;
+  bool _lastLampStatusL1 = false;
+  bool _lastAcStatusL1 = false;
+  bool _lastDispenserStatusL1 = false;
+  bool _lastSystemActiveL1 = false;
   // Floor 2
-  late bool _lastFanStatusL2,
-      _lastLampStatusL2,
-      _lastAcStatusL2,
-      _lastDispenserStatusL2,
-      _lastSystemActiveL2;
+  bool _lastFanStatusL2 = false;
+  bool _lastLampStatusL2 = false;
+  bool _lastAcStatusL2 = false;
+  bool _lastDispenserStatusL2 = false;
+  bool _lastSystemActiveL2 = false;
 
   bool _hasUnsavedChanges = false;
   bool _isDisposed = false;
@@ -122,18 +122,41 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
   @override
   void initState() {
     super.initState();
-    _initializeStatus();
+    // --- [DIUBAH] Inisialisasi sinkron terlebih dahulu ---
+    // Floor 1
+    fanStatusL1 = widget.initialFanStatusL1;
+    lampStatusL1 = widget.initialLampStatusL1;
+    acStatusL1 = widget.initialAcStatusL1;
+    dispenserStatusL1 = widget.initialDispenserStatusL1;
+    systemActiveL1 = widget.initialSystemActiveL1;
+    // Floor 2
+    fanStatusL2 = widget.initialFanStatusL2;
+    lampStatusL2 = widget.initialLampStatusL2;
+    acStatusL2 = widget.initialAcStatusL2;
+    dispenserStatusL2 = widget.initialDispenserStatusL2;
+    systemActiveL2 = widget.initialSystemActiveL2;
+
+    // Simpan state awal untuk tracking perubahan
+    _updateLastKnownState();
+
+    // --- [DIUBAH] Panggil fungsi async untuk memuat data dari memori ---
+    // Fungsi ini akan mengupdate state jika ada data tersimpan.
+    _loadSavedSettings();
+
+    // Panggilan lain tetap sama
     _setupLogging();
     _connectMqtt();
   }
 
-  Future<void> _initializeStatus() async {
+  Future<void> _loadSavedSettings() async {
+    // Fungsi ini sekarang hanya bertugas memuat dan menerapkan
+    // pengaturan yang tersimpan, tidak melakukan inisialisasi awal.
     final prefs = await SharedPreferences.getInstance();
-    final hasManualSettings = prefs.getBool(_keyHasManualSettings) ?? false;
+    if (!_isDisposed && mounted) {
+      final hasManualSettings = prefs.getBool(_keyHasManualSettings) ?? false;
 
-    if (mounted && !_isDisposed) {
-      setState(() {
-        if (hasManualSettings) {
+      if (hasManualSettings) {
+        setState(() {
           // Load saved manual settings
           // Floor 1
           fanStatusL1 =
@@ -159,25 +182,12 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
               widget.initialDispenserStatusL2;
           systemActiveL2 =
               prefs.getBool(_keySystemActiveL2) ?? widget.initialSystemActiveL2;
-        } else {
-          // Use initial values from the previous screen
-          // Floor 1
-          fanStatusL1 = widget.initialFanStatusL1;
-          lampStatusL1 = widget.initialLampStatusL1;
-          acStatusL1 = widget.initialAcStatusL1;
-          dispenserStatusL1 = widget.initialDispenserStatusL1;
-          systemActiveL1 = widget.initialSystemActiveL1;
-          // Floor 2
-          fanStatusL2 = widget.initialFanStatusL2;
-          lampStatusL2 = widget.initialLampStatusL2;
-          acStatusL2 = widget.initialAcStatusL2;
-          dispenserStatusL2 = widget.initialDispenserStatusL2;
-          systemActiveL2 = widget.initialSystemActiveL2;
-        }
-      });
+
+          // Setelah memuat, update lagi state terakhir agar tidak dianggap 'unsaved'
+          _updateLastKnownState();
+        });
+      }
     }
-    // Store initial state to track changes
-    _updateLastKnownState();
   }
 
   void _updateLastKnownState() {
@@ -193,6 +203,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
     _lastAcStatusL2 = acStatusL2;
     _lastDispenserStatusL2 = dispenserStatusL2;
     _lastSystemActiveL2 = systemActiveL2;
+    // Reset status perubahan jika state awal sama dengan yang dimuat
     _hasUnsavedChanges = false;
   }
 

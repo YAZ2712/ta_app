@@ -41,7 +41,7 @@ class DeviceStatus {
   final bool ac;
   final bool dispenser;
   final bool systemActive;
-  final int maxOccupancy;
+  // final int maxOccupancy;
   final ControlMode controlMode;
 
   DeviceStatus({
@@ -50,7 +50,7 @@ class DeviceStatus {
     required this.ac,
     required this.dispenser,
     required this.systemActive,
-    this.maxOccupancy = 10,
+    // this.maxOccupancy = 10,
     required this.controlMode,
   });
 
@@ -92,7 +92,7 @@ class DeviceStatus {
       dispenser:
           systemActive ? convertToBool(json['dispenser_status$prefix']) : false,
       systemActive: systemActive,
-      maxOccupancy: json['max_occupancy'] is int ? json['max_occupancy'] : 10,
+      // maxOccupancy: json['max_occupancy'] is int ? json['max_occupancy'] : 10,
 
       // Gunakan mode yang sudah kita tentukan dari 'manual_control'
       controlMode: mode,
@@ -105,7 +105,7 @@ class DeviceStatus {
         ac == other.ac &&
         dispenser == other.dispenser &&
         systemActive == other.systemActive &&
-        maxOccupancy == other.maxOccupancy &&
+        // maxOccupancy == other.maxOccupancy &&
         controlMode == other.controlMode;
   }
 
@@ -120,7 +120,7 @@ class DeviceStatus {
       ac.hashCode ^
       dispenser.hashCode ^
       systemActive.hashCode ^
-      maxOccupancy.hashCode ^
+      // maxOccupancy.hashCode ^
       controlMode.hashCode;
 }
 
@@ -332,7 +332,7 @@ class _CounterScreenState extends State<CounterScreen> {
     final bool isWeekendDay = isWeekend(DateTime.now());
     final bool isHolidayDay = isHoliday(DateTime.now());
     isWorkingHours =
-        !isWeekendDay && !isHolidayDay && currentHour >= 9 && currentHour < 16;
+        !isWeekendDay && !isHolidayDay && currentHour >= 9 && currentHour < 15;
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted && !_isDisposed) {
@@ -534,7 +534,7 @@ class _CounterScreenState extends State<CounterScreen> {
     final bool isHolidayDay = isHoliday(now);
 
     final bool isCurrentlyWorkingHours =
-        !isWeekendDay && !isHolidayDay && currentHour >= 9 && currentHour < 16;
+        !isWeekendDay && !isHolidayDay && currentHour >= 9 && currentHour < 15;
 
     if (isWorkingHours != isCurrentlyWorkingHours) {
       if (mounted && !_isDisposed) {
@@ -709,7 +709,7 @@ class _CounterScreenState extends State<CounterScreen> {
     final isLantai1 = _selectedFloor.first == Floor.lantai1;
     final int peopleIn = isLantai1 ? peopleInL1 : peopleInL2;
     final int peopleOut = isLantai1 ? peopleOutL1 : peopleOutL2;
-    final DeviceStatus status = isLantai1 ? _deviceStatusL1 : _deviceStatusL2;
+    // final DeviceStatus status = isLantai1 ? _deviceStatusL1 : _deviceStatusL2;
 
     return Card(
       child: Padding(
@@ -724,7 +724,7 @@ class _CounterScreenState extends State<CounterScreen> {
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
                 Text(
-                  '$peopleIn/${status.maxOccupancy}',
+                  '$peopleIn',
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -733,13 +733,13 @@ class _CounterScreenState extends State<CounterScreen> {
               ],
             ),
             const SizedBox(height: 8),
-            LinearProgressIndicator(
-              value:
-                  peopleIn /
-                  (status.maxOccupancy == 0 ? 1 : status.maxOccupancy),
-              backgroundColor: Colors.grey[200],
-              color: peopleIn >= status.maxOccupancy ? Colors.red : Colors.blue,
-            ),
+            // LinearProgressIndicator(
+            //   value:
+            //       peopleIn /
+            //       // (status.maxOccupancy == 0 ? 1 : status.maxOccupancy),
+            //   // backgroundColor: Colors.grey[200],
+            //   // color: peopleIn >= status.maxOccupancy ? Colors.red : Colors.blue,
+            // ),
             const SizedBox(height: 18),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -794,7 +794,7 @@ class _CounterScreenState extends State<CounterScreen> {
             Text(
               isWeekendDay || isHolidayDay
                   ? 'Libur Kerja'
-                  : 'Jam Kerja: 09:00 - 16:00',
+                  : 'Jam Kerja: 09:00 - 15:00',
               style: TextStyle(fontSize: 14, color: Colors.grey[700]),
             ),
           ],

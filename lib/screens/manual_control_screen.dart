@@ -78,8 +78,8 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
   String? _lastRequestId;
   Timer? _changeDebounceTimer;
 
-  Map<String, bool> _deviceStatusConfirmed = {};
-  Map<String, String> _deviceFeedbackMessages = {};
+  final Map<String, bool> _deviceStatusConfirmed = {};
+  final Map<String, String> _deviceFeedbackMessages = {};
   String _feedbackMessage = '';
   Color _feedbackColor = Colors.blue;
   bool _showProgressIndicator = false;
@@ -608,7 +608,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
           successDevices.add(deviceName);
           _updateDeviceFeedback(
             deviceKey,
-            '${isOn ? 'Berhasil dinyalakan' : 'Berhasil dimatikan'}',
+            isOn ? 'Berhasil dinyalakan' : 'Berhasil dimatikan',
             true,
           );
         } else {

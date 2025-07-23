@@ -23,7 +23,7 @@ class HomePageScreen extends StatelessWidget {
           child: Column(
             children: [
               // Hero Section - Reduced height
-              Container(
+              SizedBox(
                 height: 200,
                 width: double.infinity,
                 child: const Column(

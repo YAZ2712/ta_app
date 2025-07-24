@@ -90,8 +90,8 @@ Page resource error:
 
             // 6. Positioned Floating Back Button
             Positioned(
-              top: 10.0, // Adjust padding from the top edge of SafeArea
-              left: 10.0, // Adjust padding from the left edge
+              top: 15.0, // Adjust padding from the top edge of SafeArea
+              right: 15.0, // Adjust padding from the left edge
               child: FloatingActionButton.small(
                 // Use a small FAB for compactness
                 backgroundColor: Colors.black, // Semi-transparent background

@@ -41,7 +41,6 @@ class DeviceStatus {
   final bool ac;
   final bool dispenser;
   final bool systemActive;
-  // final int maxOccupancy;
   final ControlMode controlMode;
 
   DeviceStatus({
@@ -50,16 +49,13 @@ class DeviceStatus {
     required this.ac,
     required this.dispenser,
     required this.systemActive,
-    // this.maxOccupancy = 10,
     required this.controlMode,
   });
 
-  // Diubah: Factory method sekarang menerima prefix (misal: '_l1' atau '_l2')
   factory DeviceStatus.fromJson(
     Map<String, dynamic> json, {
     String prefix = '',
   }) {
-    // Helper function untuk konversi nilai apapun ke boolean
     bool convertToBool(dynamic value) {
       if (value is bool) return value;
       if (value is int) return value != 0;
@@ -69,32 +65,24 @@ class DeviceStatus {
       return false;
     }
 
-    // --- PERUBAHAN LOGIKA DIMULAI DI SINI ---
-    // 1. Ambil nilai 'manual_control' dari JSON.
-    //    Ini adalah kunci global, jadi tidak perlu prefix.
-    // 2. Jika kunci tidak ada (null), kita anggap nilainya 0 (mode otomatis) sebagai default.
-    final int manualControlValue = json['manual_control'] ?? 0;
-
-    // 3. Tentukan ControlMode berdasarkan nilai tersebut.
-    //    Jika manual_control adalah 1, set mode ke Manual. Jika tidak, Otomatis.
+    final normalizedPrefix = prefix.replaceAll('_', '');
+    final String manualControlKey = 'manual_control_$normalizedPrefix';
+    final int manualControlValue = json[manualControlKey] ?? 0;
     final ControlMode mode =
         (manualControlValue == 1) ? ControlMode.manual : ControlMode.otomatis;
-    // --- AKHIR PERUBAHAN LOGIKA ---
 
-    // Gunakan prefix untuk mendapatkan kunci status perangkat per lantai
     final systemActive = convertToBool(json['system_active$prefix']);
 
     return DeviceStatus(
-      // Status perangkat tetap bergantung pada systemActive per lantai
-      fan: systemActive ? convertToBool(json['fan_status$prefix']) : false,
-      lamp: systemActive ? convertToBool(json['lamp_status$prefix']) : false,
-      ac: systemActive ? convertToBool(json['ac_status$prefix']) : false,
-      dispenser:
-          systemActive ? convertToBool(json['dispenser_status$prefix']) : false,
-      systemActive: systemActive,
-      // maxOccupancy: json['max_occupancy'] is int ? json['max_occupancy'] : 10,
+      // PERBAIKAN: Baca status setiap perangkat secara langsung dari JSON,
+      // tanpa bergantung pada nilai `systemActive`.
+      fan: convertToBool(json['fan_status$prefix']),
+      lamp: convertToBool(json['lamp_status$prefix']),
+      ac: convertToBool(json['ac_status$prefix']),
+      dispenser: convertToBool(json['dispenser_status$prefix']),
 
-      // Gunakan mode yang sudah kita tentukan dari 'manual_control'
+      // `systemActive` tetap dibaca untuk menentukan status sistem secara umum
+      systemActive: systemActive,
       controlMode: mode,
     );
   }
@@ -105,7 +93,6 @@ class DeviceStatus {
         ac == other.ac &&
         dispenser == other.dispenser &&
         systemActive == other.systemActive &&
-        // maxOccupancy == other.maxOccupancy &&
         controlMode == other.controlMode;
   }
 
@@ -120,7 +107,6 @@ class DeviceStatus {
       ac.hashCode ^
       dispenser.hashCode ^
       systemActive.hashCode ^
-      // maxOccupancy.hashCode ^
       controlMode.hashCode;
 }
 
@@ -268,7 +254,7 @@ class _CounterScreenState extends State<CounterScreen> {
   late AntaresMqttService _antaresService;
   bool _hasInitialDataOnHoliday = false;
 
-  // --- PERUBAHAN STATE: Data untuk 2 Lantai ---
+  // Data untuk 2 Lantai
   int peopleInL1 = 0;
   int peopleOutL1 = 0;
   DeviceStatus _deviceStatusL1 = DeviceStatus(
@@ -418,6 +404,9 @@ class _CounterScreenState extends State<CounterScreen> {
       return;
     }
 
+    // PERBAIKAN: Debug log untuk melihat data yang diterima
+    logger.info('Received data: ${data.toString()}');
+
     // Ambil data baru untuk Lantai 1
     int newPeopleInL1 = data['current_occupancy_l1'] ?? peopleInL1;
     int newPeopleOutL1 = data['total_people_exited_l1'] ?? peopleOutL1;
@@ -427,6 +416,14 @@ class _CounterScreenState extends State<CounterScreen> {
     int newPeopleInL2 = data['current_occupancy_l2'] ?? peopleInL2;
     int newPeopleOutL2 = data['total_people_exited_l2'] ?? peopleOutL2;
     DeviceStatus newDeviceStatusL2 = DeviceStatus.fromJson(data, prefix: '_l2');
+
+    // PERBAIKAN: Debug log untuk melihat control mode yang dideteksi
+    logger.info(
+      'L1 manual_control_l1: ${data['manual_control_l1']}, Mode: ${newDeviceStatusL1.controlMode}',
+    );
+    logger.info(
+      'L2 manual_control_l2: ${data['manual_control_l2']}, Mode: ${newDeviceStatusL2.controlMode}',
+    );
 
     // Cek apakah ada perubahan data
     bool hasChanges = false;
@@ -440,6 +437,9 @@ class _CounterScreenState extends State<CounterScreen> {
         !newDeviceStatusL2.isEqual(_previousDeviceStatusL2!)) {
       hasChanges = true;
       logger.info('Data changed. L1 In: $newPeopleInL1, L2 In: $newPeopleInL2');
+      logger.info(
+        'L1 Mode: ${newDeviceStatusL1.controlMode}, L2 Mode: ${newDeviceStatusL2.controlMode}',
+      );
     }
 
     // Hanya update UI jika ada perubahan
@@ -505,9 +505,7 @@ class _CounterScreenState extends State<CounterScreen> {
             final deviceData = jsonDecode(data['m2m:cin']['con']);
             if (deviceData is Map<String, dynamic>) {
               logger.info('Processing HTTP data');
-              _parseAndUpdateData(
-                deviceData,
-              ); // Gunakan fungsi parsing yang sudah dibuat
+              _parseAndUpdateData(deviceData);
             }
           }
         } else {
@@ -521,9 +519,8 @@ class _CounterScreenState extends State<CounterScreen> {
     }
   }
 
-  // --- UPDATE: Helper method ini diubah untuk mencari kunci baru ---
   bool _isCounterRelevantData(Map<String, dynamic> data) {
-    // Cukup cek salah satu kunci unik dari data baru, misal 'current_occupancy_l1'
+    // Cek salah satu kunci unik dari data baru
     return data.containsKey('current_occupancy_l1') ||
         data.containsKey('source');
   }
@@ -598,28 +595,49 @@ class _CounterScreenState extends State<CounterScreen> {
     return '';
   }
 
-  // --- PERUBAHAN: Widget Indikator Mode untuk AppBar ---
-  Widget buildModeIndicator(ControlMode mode) {
+  // Widget Indikator Mode untuk AppBar
+  // GANTI WIDGET buildModeIndicator YANG LAMA DENGAN YANG INI
+  Widget buildModeIndicator(ControlMode mode, Floor floor) {
+    // Paksa Lantai 2 selalu mode manual
+    if (floor == Floor.lantai2) {
+      mode = ControlMode.manual;
+    }
+
     final bool isOtomatis = mode == ControlMode.otomatis;
     final IconData icon = isOtomatis ? Icons.auto_awesome : Icons.pan_tool;
-    final String text =
-        isOtomatis ? 'Mode Otomatis Aktif' : 'Mode Kontrol Manual Aktif';
     final Color color = isOtomatis ? Colors.green : Colors.orange;
 
+    // ✅ Tambahkan ini sebelum return
+    final Color bgColor =
+        floor == Floor.lantai2 ? Colors.orange.shade100 : Colors.grey.shade300;
+
+    String text;
+    if (floor == Floor.lantai1) {
+      text =
+          isOtomatis
+              ? 'Lantai 1: Mode Otomatis Aktif'
+              : 'Lantai 1: Mode Manual Aktif';
+    } else {
+      text = 'Lantai 2: Mode Manual Aktif';
+    }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Colors.grey.shade300, // Warna latar yang lembut
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: bgColor, // ✅ Gunakan di sini
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(icon, color: color, size: 20),
           const SizedBox(width: 8),
-          Text(
-            text,
-            style: TextStyle(
-              color: color,
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
+          Flexible(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
             ),
           ),
         ],
@@ -686,16 +704,15 @@ class _CounterScreenState extends State<CounterScreen> {
             const SizedBox(height: 8),
             Column(
               children: [
-                buildStatusRow('Kipas', status.systemActive && status.fan),
+                // PERBAIKAN: Hapus kondisi `status.systemActive &&`.
+                // Tampilkan status asli dari perangkat.
+                buildStatusRow('Kipas', status.fan),
                 const Divider(),
-                buildStatusRow('Lampu', status.systemActive && status.lamp),
+                buildStatusRow('Lampu', status.lamp),
                 const Divider(),
-                buildStatusRow('AC', status.systemActive && status.ac),
+                buildStatusRow('AC', status.ac),
                 const Divider(),
-                buildStatusRow(
-                  'Dispenser',
-                  status.systemActive && status.dispenser,
-                ),
+                buildStatusRow('Dispenser', status.dispenser),
               ],
             ),
           ],
@@ -709,7 +726,6 @@ class _CounterScreenState extends State<CounterScreen> {
     final isLantai1 = _selectedFloor.first == Floor.lantai1;
     final int peopleIn = isLantai1 ? peopleInL1 : peopleInL2;
     final int peopleOut = isLantai1 ? peopleOutL1 : peopleOutL2;
-    // final DeviceStatus status = isLantai1 ? _deviceStatusL1 : _deviceStatusL2;
 
     return Card(
       child: Padding(
@@ -732,14 +748,6 @@ class _CounterScreenState extends State<CounterScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            // LinearProgressIndicator(
-            //   value:
-            //       peopleIn /
-            //       // (status.maxOccupancy == 0 ? 1 : status.maxOccupancy),
-            //   // backgroundColor: Colors.grey[200],
-            //   // color: peopleIn >= status.maxOccupancy ? Colors.red : Colors.blue,
-            // ),
             const SizedBox(height: 18),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -845,7 +853,7 @@ class _CounterScreenState extends State<CounterScreen> {
 
   Widget buildConnectionStatusForAppBar() {
     return Padding(
-      padding: const EdgeInsets.only(right: 16.0), // Beri jarak dari tepi kanan
+      padding: const EdgeInsets.only(right: 16.0),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -858,10 +866,7 @@ class _CounterScreenState extends State<CounterScreen> {
           const SizedBox(width: 6),
           Text(
             _isConnectedToAntares ? 'Online' : 'Offline',
-            style: const TextStyle(
-              color: Colors.white, // Agar kontras dengan AppBar
-              fontSize: 14,
-            ),
+            style: const TextStyle(color: Colors.white, fontSize: 14),
           ),
         ],
       ),
@@ -870,20 +875,24 @@ class _CounterScreenState extends State<CounterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final ControlMode currentMode =
-        (_selectedFloor.first == Floor.lantai1)
-            ? _deviceStatusL1.controlMode
-            : _deviceStatusL2.controlMode;
+    // Ambil mode untuk lantai yang sedang dipilih
+    final Floor currentFloor = _selectedFloor.first;
+    final DeviceStatus currentDeviceStatus =
+        (currentFloor == Floor.lantai1) ? _deviceStatusL1 : _deviceStatusL2;
+    final ControlMode currentMode = currentDeviceStatus.controlMode;
+
+    // Logika untuk indikator mode di AppBar (ini sudah ada di file sebelumnya, kita gunakan lagi)
+    // final bool isWeekendDay = isWeekend(now);
+    // final bool isHolidayDay = isHoliday(now);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Kontrol Otomatis'),
-        // Menambahkan style agar sama dengan halaman lain
         backgroundColor: Colors.indigo.shade400,
         foregroundColor: Colors.grey.shade50,
         elevation: 0,
         actions: [buildConnectionStatusForAppBar()],
       ),
-      // Menambahkan Container dengan LinearGradient sebagai background
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -895,7 +904,7 @@ class _CounterScreenState extends State<CounterScreen> {
         child: SafeArea(
           child: Column(
             children: [
-              buildModeIndicator(currentMode),
+              buildModeIndicator(currentMode, currentFloor),
               Expanded(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
@@ -914,7 +923,7 @@ class _CounterScreenState extends State<CounterScreen> {
                                 style: const TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.white, // Agar lebih kontras
+                                  color: Colors.white,
                                 ),
                               ),
                             ],
@@ -924,7 +933,7 @@ class _CounterScreenState extends State<CounterScreen> {
                             style: const TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
-                              color: Colors.white, // Agar lebih kontras
+                              color: Colors.white,
                             ),
                           ),
                         ],
@@ -961,7 +970,7 @@ class _CounterScreenState extends State<CounterScreen> {
                       const SizedBox(height: 20),
                       buildPeopleCounter(),
                       const SizedBox(height: 20),
-                      buildDeviceStatus(),
+                      buildDeviceStatus(), // Widget ini sudah diperbaiki di atas
                       const SizedBox(height: 20),
                       IntrinsicHeight(
                         child: Row(

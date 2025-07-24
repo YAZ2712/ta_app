@@ -716,6 +716,12 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
     _deviceFeedbackMessages.clear();
     _deviceStatusConfirmed.clear();
 
+    bool isManualL1 =
+        fanStatusL1 != _lastFanStatusL1 ||
+        lampStatusL1 != _lastLampStatusL1 ||
+        acStatusL1 != _lastAcStatusL1 ||
+        dispenserStatusL1 != _lastDispenserStatusL1;
+
     // Hitung jumlah perubahan untuk feedback yang lebih baik
     int changeCount = 0;
     if (systemActiveL1 != _lastSystemActiveL1) changeCount++;
@@ -752,7 +758,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
       final contentPayload = {
         "source": "flutter_app",
         "control_command": "1", // 1 untuk mode kontrol manual
-        "manual_control": 1,
+        "manual_control_l1": isManualL1 ? 1 : 0,
         // Lantai 1 (konversi boolean ke integer 0 atau 1)
         "system_active_l1": systemActiveL1 ? 1 : 0,
         "fan_status_l1": fanStatusL1 ? 1 : 0,
@@ -760,6 +766,7 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
         "ac_status_l1": acStatusL1 ? 1 : 0,
         "dispenser_status_l1": dispenserStatusL1 ? 1 : 0,
         // Lantai 2
+        "manual_control_l2": 1,
         "system_active_l2": systemActiveL2 ? 1 : 0,
         "fan_status_l2": fanStatusL2 ? 1 : 0,
         "lamp_status_l2": lampStatusL2 ? 1 : 0,
@@ -880,7 +887,8 @@ class _ManualControlScreenState extends State<ManualControlScreen> {
       final contentPayload = {
         "source": "flutter_app",
         "control_command": "0", // 0 = auto mode
-        "manual_control": 0,
+        "manual_control_l1": 0,
+        "manual_control_l2": 0,
         "resetOccupancy": 0,
         // Set all systems to inactive when switching to auto
         "system_active_l1": 0,
